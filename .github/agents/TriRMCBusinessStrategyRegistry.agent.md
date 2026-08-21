@@ -14,7 +14,7 @@ user-invocable: true
 - 边界：不做技术实现裁决（归 CTO / `TriRMCCodeRegistry`）；不做产品功能面细节（归 `TriRMCProductRegistry`）；不代替中央 `BusinessStrategy` 裁决。
 - 上游：`TriMetaverse/BusinessStrategy`（中央商业真源）；CEO 决策①（2026-08-21：路径 B 资产迁入为种子）。
 - 消费方：`TriRMCProductRegistry`、`TriRMCCodeRegistry`；中央 `TriMetaverseBusinessStrategyRegistry`（模块 registry fan-in）。
-- owner：待指派（立项期由编排层代管；模块 owner 指派归 CEOChiefOfStaff / BusinessStrategy）。
+- owner：BusinessStrategy（模块边界与优先级口径，../TriMetaverse/docs/workflow/github-repo-governance.md §8「中央战略与模块边界裁决」）；模块实例级维护 owner 待指派（立项期由编排层代管）。
 
 ## 核心职责
 

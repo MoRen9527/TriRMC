@@ -53,8 +53,8 @@
 
 1. git init ＋ dev 分支 ＋ 首次 commit（编排层补，本批无 shell 权限）
 2. workspace folders 登记（`trimetaverse.code-workspace` 追加 `../TriRMC`）＋治理文档仓库清单登记（`github-repo-governance.md` §1.1）——归编排层
-3. `docs/` 六件套骨架（engineering/product/registry/workflow/training/execution）——架构文档 §2 模块骨架纪律项，本批未建
-4. 本地 CodeGraph 初始化——同上骨架纪律项，本批未建
+3. `docs/` 六件套骨架（engineering/product/registry/workflow/training/execution）——架构文档 §2 模块骨架纪律项，本批未建；缺失标配按治理条款由 CTO 发现当轮或下一轮优先补齐
+4. 本地 CodeGraph 初始化——同上骨架纪律项，本批未建；补齐责任同上（CTO 当轮或下一轮优先补齐）
 5. CI 接线（`build-tricade.yml` 增加 TriRMC checkout）——依赖登记见 MIGRATION.md §七，归期 2 骨架归位批或独立 chore 批
 6. 期 2 迁移主体执行（批清单见上表预告；先决＝开业闭环）
 

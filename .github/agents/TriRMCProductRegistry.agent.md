@@ -14,7 +14,7 @@ user-invocable: true
 - 边界：不做商业边界裁决（归 `TriRMCBusinessStrategyRegistry`）；不做代码结构裁决（归 `TriRMCCodeRegistry`）。
 - 上游：`TriRMCBusinessStrategyRegistry`；CEO 决策①（路径 B 种子）；R6 §1.2/§五（批构成与分期）。
 - 消费方：中央 `TriMetaverseProductRegistry`（模块 registry fan-in）；关心服务域能力与迁移排期的调用方。
-- owner：待指派（立项期由编排层代管；模块 owner 指派归 CEOChiefOfStaff / BusinessStrategy）。
+- owner：CPO 小乔（模块产品事实与 PRD 归属，../TriMetaverse/docs/workflow/github-repo-governance.md §8「模块产品事实与 PRD 归属」）；模块实例级维护 owner 待指派（立项期由编排层代管）。
 
 ## 核心职责
 

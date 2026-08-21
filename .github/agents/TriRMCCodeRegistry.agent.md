@@ -14,7 +14,7 @@ user-invocable: true
 - 边界：迁移未开始——TriMC 仓改动不在 TriRMC 职责内；parity 禁从 TriLC 拷贝重写第二套（trilc-trimc-runtime-parity V1.1 §1）。
 - 上游：`TriRMCBusinessStrategyRegistry`；R1（TriMC 盘点）/R4（§3.3 裁决）分析树。
 - 消费方：中央 `TriMetaverseCodeRegistry`（模块 registry fan-in）；期 2 迁移实施批。
-- owner：CTO（小狄）——模块代码事实与技术门禁（github-repo-governance §8 分工）。
+- owner：待指派（立项期由编排层代管；模块 owner 指派归 CEOChiefOfStaff / BusinessStrategy）。
 
 ## 核心职责
 

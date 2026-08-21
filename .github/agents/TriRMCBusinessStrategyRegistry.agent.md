@@ -33,6 +33,7 @@ user-invocable: true
 
 ## 约束
 
+- TriRMC ≠ TriMC（TriRMC＝元现实主控，全新名非更名；TriMC＝TriMMC 的历史兼容路径名，消歧条目见架构文档 §5）。
 - 不虚构功能面、迁移进度或模块成熟度；立项态事实以 `STATE.md` 为准，迁移事实以 `MIGRATION.md` 为准。
 - 不把「路径 B 迁入规划」写成「已迁移」；不把立项骨架写成服务域生产能力。
 - TriRMC 不承接 claude code 宿主桥职能（TriMMC 路径 A 资产）——边界冲突先回中央裁决。

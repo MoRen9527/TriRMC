@@ -26,6 +26,10 @@ TriRMC（Reality Main Controller，元现实主控）是三元宇宙元现实系
 - 部署形态参照 TriMC manifests：docker-compose（服务 + PostgreSQL 16）、k8s、systemd + 降权运行。
 - 安全基线（R4 §七裁决）：绑定回环或内网面（ssh / VPN 入口），禁止裸公网；写面 token 与只读投影面独立只读 token，读写分离。
 
+## 命名消歧
+
+TriRMC ≠ TriMC。TriRMC＝元现实主控（Reality Main Controller），2026-08-21 重定义登记的**全新名，非更名**；TriMC＝历史兼容路径名，其更名对是 TriMMC↔TriMC（见架构文档 §5 alias 条目）。两名词一字母之差，自动扫描、批处理 prompt、报告聚合与教程生成须维护消歧，防误判（混淆风险评估：R3-concept-naming-inventory）。消歧与 alias 真源：`../TriMetaverse/docs/三元宇宙架构与模块说明.md` §5（v0.5）。
+
 ## 当前状态
 
 - 已立项（2026-08-22，批次 TMV-P1-5）：仓库骨架 + 新模块四件套标准配套到位，零代码。

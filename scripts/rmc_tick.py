@@ -104,23 +104,55 @@ def save_registry(r: dict) -> None:
     REGISTRY_PATH.write_text(json.dumps(r, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def run_trilc_task(tree: dict, brief_path: Path, cfg: dict):
-    """POST /v1/messages 到本机 TriRLC——agent-core 完整循环执行简报。"""
+def _tree_brief(tree: dict) -> str:
+    tree_path = Path(tree["path"])
+    try:
+        tree_text = tree_path.read_text(encoding="utf-8")
+    except Exception as e:
+        tree_text = "(read failed: %s)" % e
+    parts = [
+        "# R-side orchestration task brief",
+        "",
+        "You are this tick's R-face executor instance.",
+        "Working directory: /srv/fleet/TriMetaverse",
+        "",
+        "Target tree file content:",
+        "",
+        "```json",
+        tree_text,
+        "```",
+        "",
+        "## Task",
+        "Execute each pending node action yourself using your tools.",
+        "",
+        "## Hard rules",
+        "- State first: commit progress skeleton immediately, then one commit per atomic step",
+        "- Write ONLY inside the tree directory and paths explicitly named by node actions;",
+        "  everything else under operating-records is read-only",
+        "- git limited to: add explicit paths / commit / push origin dev; no force, no rebase",
+        "- On factual obstacles mark blocked and stop; never fabricate completion",
+        "- Closeout: when all nodes done set top-level status=done, commit and push",
+        "",
+        "## Done means",
+        "All pending nodes done + top-level done + closeout commit pushed.",
+        "End with a summary (per-node result + commit hashes).",
+    ]
+    return chr(10).join(parts)
+
+
+def run_trilc_task(tree: dict, cfg: dict):
+    """POST /v1/messages to local TriRLC - agent-core loop runs the brief."""
     body = json.dumps({
         "model": cfg["model"],
         "max_tokens": cfg["max_tokens"],
-        "messages": [{"role": "user", "content":
-                      "读取 " + str(brief_path) + " 并严格执行其全部指令。\n\n"
-                      "目标树: " + tree["treeId"] + " @ " + tree["path"]}],
+        "messages": [{"role": "user", "content": _tree_brief(tree)}],
     }).encode()
     req = urllib.request.Request(TRILC_MESSAGES, data=body,
                                  headers={"content-type": "application/json"},
                                  method="POST")
     try:
-        # TriRLC /v1/messages 恒为 SSE 流：解析 content_block_delta 文本与
-        # message_delta 的 usage，message_stop 即任务完成
-        text_parts: list[str] = []
-        usage: dict = {}
+        text_parts = []
+        usage = {}
         with urllib.request.urlopen(req, timeout=cfg["session_timeout_s"]) as resp:
             for raw in resp:
                 line = raw.decode("utf-8", "replace").strip()
@@ -202,7 +234,7 @@ def main() -> int:
         {"treeId": tree["treeId"], "path": tree["path"],
          "pendingNodes": tree["pendingNodes"]}, ensure_ascii=False), encoding="utf-8")
 
-    rc, out, usage = run_trilc_task(tree, brief_path, cfg)
+    rc, out, usage = run_trilc_task(tree, cfg)
     total_tokens = (int(usage.get("input_tokens", 0))
                     + int(usage.get("cache_read_input_tokens", 0))
                     + int(usage.get("cache_creation_input_tokens", 0))

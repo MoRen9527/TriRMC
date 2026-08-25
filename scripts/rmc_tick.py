@@ -181,6 +181,10 @@ def run_trilc_task(tree: dict, cfg: dict):
                         usage["input_tokens"] = u["input_tokens"]
         return 0, "".join(text_parts)[-800:], usage
     except urllib.error.HTTPError as e:
+        try:
+            LOCK_PATH.unlink()
+        except Exception:
+            pass
         return e.code, "HTTP %d: %s" % (e.code, e.read().decode("utf-8", "replace")[:400]), {}
     except Exception as e:
         return 1, "task error: %s" % e, {}
@@ -189,6 +193,8 @@ def run_trilc_task(tree: dict, cfg: dict):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="监督模式：跳过冷却期（锁检查仍生效）")
     args = ap.parse_args()
     cfg = _load_config()
     now = datetime.now(timezone.utc)
@@ -220,8 +226,12 @@ def main() -> int:
         ticks = load_registry().get("ticks", [])
         last = ticks[-1] if ticks else None
         age = time.time() - last.get("ts_epoch", 0) if last else 1e9
-        if not (last and (last.get("rc") == 0 or age > 1800)
-                and _lock_stale_or_absent(cfg)):
+        if not args.force:
+            eligible = last and (last.get("rc") == 0 or age > 1800) \
+                and _lock_stale_or_absent(cfg)
+            if not eligible:
+                return 0
+        elif not _lock_stale_or_absent(cfg):
             return 0
     if over:
         print("DOWNGRADE:", budget_msg)

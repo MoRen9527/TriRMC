@@ -146,7 +146,7 @@ def _tree_brief(tree: dict) -> str:
     return chr(10).join(parts)
 
 
-def run_trilc_task(tree: dict, cfg: dict):
+def run_trilc_task(tree: dict, cfg: dict, driven_round: int = 0):
     """POST /v1/messages to local TriRLC - agent-core loop runs the brief."""
     body = json.dumps({
         "model": cfg["model"],
@@ -157,7 +157,9 @@ def run_trilc_task(tree: dict, cfg: dict):
                   "production plane. You NEVER end your turn early: keep issuing tool "
                   "calls until every node is done, committed and pushed. Summaries "
                   "without completed work are failures.",
-        "messages": [{"role": "user", "content": _tree_brief(tree)}],
+        "messages": [{"role": "user",
+                      "content": _tree_brief(tree)
+                      + "\n\n[DRIVEN ROUND %d] 若树仍未 done：从断点继续执行，禁止重复已完成的步骤。" % driven_round}],
     }).encode()
     req = urllib.request.Request(TRILC_MESSAGES, data=body,
                                  headers={"content-type": "application/json"},
@@ -256,11 +258,32 @@ def main() -> int:
         {"treeId": tree["treeId"], "path": tree["path"],
          "pendingNodes": tree["pendingNodes"]}, ensure_ascii=False), encoding="utf-8")
 
-    rc, out, usage = run_trilc_task(tree, cfg)
-    total_tokens = (int(usage.get("input_tokens", 0))
-                    + int(usage.get("cache_read_input_tokens", 0))
-                    + int(usage.get("cache_creation_input_tokens", 0))
-                    + int(usage.get("output_tokens", 0)))
+    # 完成度驱动外循环：模型单轮可能早停（推理模型常见），编排层以树文件
+    # 顶层 status==done 为唯一完成判据，未完成则携带进度继续驱动（确定性，
+    # 不依赖模型自觉）。上限 MAX_DRIVEN_ROUNDS。
+    MAX_DRIVEN_ROUNDS = 5
+    rc, out, usage = 0, "", {}
+    total_tokens = 0
+    for driven_round in range(MAX_DRIVEN_ROUNDS):
+        try:
+            tree_now = json.loads(Path(tree["path"]).read_text(encoding="utf-8"))
+        except Exception:
+            tree_now = {}
+        if tree_now.get("status") == "done":
+            out = "(driven round %d) tree already done" % driven_round
+            break
+        rc_i, out_i, usage_i = run_trilc_task(tree, cfg, driven_round)
+        rc, out, usage = rc_i, out_i, usage_i
+        total_tokens += (int(usage.get("input_tokens", 0))
+                         + int(usage.get("cache_read_input_tokens", 0))
+                         + int(usage.get("cache_creation_input_tokens", 0))
+                         + int(usage.get("output_tokens", 0)))
+        try:
+            tree_now = json.loads(Path(tree["path"]).read_text(encoding="utf-8"))
+        except Exception:
+            tree_now = {}
+        if tree_now.get("status") == "done" or rc_i != 0:
+            break
     ledger.setdefault("sessions", []).append(
         {"ts": now.isoformat(), "tree": tree["treeId"],
          "total_tokens": total_tokens, "usage": usage})

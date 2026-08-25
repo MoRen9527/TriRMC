@@ -117,12 +117,35 @@ def run_trilc_task(tree: dict, brief_path: Path, cfg: dict):
                                  headers={"content-type": "application/json"},
                                  method="POST")
     try:
+        # TriRLC /v1/messages 恒为 SSE 流：解析 content_block_delta 文本与
+        # message_delta 的 usage，message_stop 即任务完成
+        text_parts: list[str] = []
+        usage: dict = {}
         with urllib.request.urlopen(req, timeout=cfg["session_timeout_s"]) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        text = "".join(b.get("text", "") for b in data.get("content", [])
-                       if b.get("type") == "text")
-        usage = data.get("usage", {}) or {}
-        return 0, text[-800:], usage
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    ev = json.loads(line[5:].strip())
+                except Exception:
+                    continue
+                t = ev.get("type", "")
+                if t == "content_block_delta":
+                    d = ev.get("delta", {})
+                    if d.get("type") == "text_delta":
+                        text_parts.append(d.get("text", ""))
+                elif t == "message_delta":
+                    u = ev.get("usage") or {}
+                    usage["output_tokens"] = u.get("output_tokens",
+                                                    usage.get("output_tokens", 0))
+                elif t == "message_start":
+                    u = (ev.get("message", {}) or {}).get("usage") or {}
+                    if u.get("input_tokens"):
+                        usage["input_tokens"] = u["input_tokens"]
+                elif t == "message_stop":
+                    break
+        return 0, "".join(text_parts)[-800:], usage
     except urllib.error.HTTPError as e:
         return e.code, "HTTP %d: %s" % (e.code, e.read().decode("utf-8", "replace")[:400]), {}
     except Exception as e:

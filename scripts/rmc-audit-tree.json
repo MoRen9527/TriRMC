@@ -1,0 +1,15 @@
+{
+  "treeId": "rmc-audit-cmp-001",
+  "title": "R 面六模块代码审计（与 M 面 TriMMC 审计对照）",
+  "week": "W35",
+  "domainRouting": "server-executable",
+  "status": "active",
+  "created": "2026-08-26",
+  "nodes": [
+    {"nodeId": "AC-R1", "agent": "TestEngineer", "status": "pending", "action": "审计 TriRMC（/srv/fleet/TriRMC/src/ 全部 .ts 文件）：cron/session-bridge/config-sync/agent-loop 质量与安全面。产出 reports/rmc-TriRMC.md，发现按 P0/P1/P2 分级带 file:line"},
+    {"nodeId": "AC-R2", "agent": "TestEngineer", "status": "pending", "action": "审计 TriCompany/packages/agent-core/src/：loop.ts/tools.ts/permissions*.ts/sub-agent/*.ts 质量。产出 reports/rmc-agent-core.md 同格式"},
+    {"nodeId": "AC-R3", "agent": "TestEngineer", "status": "pending", "action": "审计 TriLC（/srv/fleet/TriLC/src/server/app.ts + src/config/ + src/cron/）：daemon HTTP 面质量。产出 reports/rmc-TriLC.md"},
+    {"nodeId": "AC-R4", "agent": "TestEngineer", "status": "pending", "action": "审计 TriModel（/srv/fleet/TriModel/src/）：config/client/providers/api。产出 reports/rmc-TriModel.md"}
+  ],
+  "doneCondition": "四份报告齐 + 发现计数汇总"
+}

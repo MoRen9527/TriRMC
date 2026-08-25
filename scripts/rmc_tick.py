@@ -153,6 +153,8 @@ def run_trilc_task(tree: dict, cfg: dict):
     try:
         text_parts = []
         usage = {}
+        # 注意：多轮工具循环中每轮都会发 message_stop——绝不能在此 break，
+        # 否则客户端断连会导致 TriLC 中止整个任务。读到流 EOF 才是真正结束。
         with urllib.request.urlopen(req, timeout=cfg["session_timeout_s"]) as resp:
             for raw in resp:
                 line = raw.decode("utf-8", "replace").strip()
@@ -175,8 +177,6 @@ def run_trilc_task(tree: dict, cfg: dict):
                     u = (ev.get("message", {}) or {}).get("usage") or {}
                     if u.get("input_tokens"):
                         usage["input_tokens"] = u["input_tokens"]
-                elif t == "message_stop":
-                    break
         return 0, "".join(text_parts)[-800:], usage
     except urllib.error.HTTPError as e:
         return e.code, "HTTP %d: %s" % (e.code, e.read().decode("utf-8", "replace")[:400]), {}

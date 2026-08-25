@@ -125,6 +125,12 @@ def _tree_brief(tree: dict) -> str:
         "## Task",
         "Execute each pending node action yourself using your tools.",
         "",
+        "## CRITICAL - continuous execution",
+        "- You are an AUTONOMOUS WORKER. Do NOT stop to summarize progress.",
+        "- After EVERY tool result, immediately continue with the next tool call",
+        "  until the Done condition is fully met.",
+        "- Ending your turn without: all nodes done + commits pushed = FAILURE.",
+        "",
         "## Hard rules",
         "- State first: commit progress skeleton immediately, then one commit per atomic step",
         "- Write ONLY inside the tree directory and paths explicitly named by node actions;",
@@ -147,6 +153,10 @@ def run_trilc_task(tree: dict, cfg: dict):
         "max_tokens": cfg["max_tokens"],
         # 非交互 print 模式下 ask=deny——自治执行体必须显式提权（loopback+fleet 沙箱内）
         "permissionMode": "bypassPermissions",
+        "system": "You are a relentless autonomous execution worker on the R-face "
+                  "production plane. You NEVER end your turn early: keep issuing tool "
+                  "calls until every node is done, committed and pushed. Summaries "
+                  "without completed work are failures.",
         "messages": [{"role": "user", "content": _tree_brief(tree)}],
     }).encode()
     req = urllib.request.Request(TRILC_MESSAGES, data=body,

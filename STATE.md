@@ -63,3 +63,13 @@
 - R4 目标态：agent-core ADE runtime + service adapter（PostgreSQL/集群/webhook）；吸收 cron（周平面）/config-sync（五维接收）/observability/comm 仲裁；新增只读投影 API（会话/任务/名册，供 TriRLC 聚合代理拉取）。
 - 安全目标态：回环或内网面（ssh/VPN 入口），禁止裸公网；写面 token + 只读投影面独立只读 token（R4 §七）。
 - 元现实内通信（bridge-3）协议统一 HTTP+SSE（与 TriRLC 同构栈）。
+
+## 部署记录（2026-08-25）
+
+- **首台生产实例上线**：河源服务器 8.155.54.79（Ubuntu 24.04，2C/1.6G）
+- 形态：`trirmc.service` systemd 常驻（User=fleet，WorkingDirectory=/srv/fleet/TriRMC）
+- 端口：**127.0.0.1:8712（loopback only）**——B2 教训第一天落实，公网暴露待 M3 鉴权方案后再议
+- 资源：MemoryMax=800M（本机 1.6G 小机型，纯控制器定位，不跑 CC 会话）
+- 鉴权：TRIRMC_INTERNAL_TOKEN 门启用即生效（/etc/trirmc-internal-token + fleet 家目录副本）
+- 代码链：GitHub 三仓直克隆（TriRMC/TriCompany/TriModel），file: 链接在 /srv/fleet 相对布局下解析；agent-core 与 TriModel 已在服务器构建 dist
+- 待办：cron 承接周平面调度（MIGRATION.md 批项 2）、TriRLC 心跳指向切换（批项 4，可回切）、runbook 独立成文（Q2n-5）

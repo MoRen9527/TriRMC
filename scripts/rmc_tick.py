@@ -153,6 +153,9 @@ def run_trilc_task(tree: dict, cfg: dict, driven_round: int = 0):
         "max_tokens": cfg["max_tokens"],
         # 非交互 print 模式下 ask=deny——自治执行体必须显式提权（loopback+fleet 沙箱内）
         "permissionMode": "bypassPermissions",
+        # TC-1 内核续跑：服务端保留全上下文多轮驱动（外循环降级为保险）
+        "continue_max_rounds": 4,
+        "continue_prompt": "Check the target tree file. If top-level status is done, reply exactly: DONE. Otherwise continue executing the remaining node actions until done.",
         "system": "You are a relentless autonomous execution worker on the R-face "
                   "production plane. You NEVER end your turn early: keep issuing tool "
                   "calls until every node is done, committed and pushed. Summaries "

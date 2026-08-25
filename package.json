@@ -1,0 +1,40 @@
+{
+  "name": "trirmc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TriMetaverse Main Controller",
+  "type": "module",
+  "engines": {
+    "node": ">=18.20.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "test:e2e": "node --import tsx --test test/e2e/**/*.test.ts"
+  },
+  "bin": {
+    "trimc": "./dist/src/cli.js"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "@tricompany/agent-core": "file:../TriCompany/packages/agent-core",
+    "croner": "^10.0.1",
+    "pg": "^8.13.1",
+    "trimodel": "file:../TriModel",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/pg": "^8.15.5",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

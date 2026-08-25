@@ -670,7 +670,9 @@ export function createTriMCApp(env: TriMCEnv) {
 
       await new Promise<void>((resolve, reject) => {
         server!.on('error', reject);
-        server!.listen(env.port, () => resolve());
+        // P0 加固配套（B2 教训）：默认仅绑定 loopback；显式 TRIRMC_HOST 可覆盖
+        const bindHost = process.env.TRIRMC_HOST ?? '127.0.0.1';
+        server!.listen(env.port, bindHost, () => resolve());
       });
 
       // Read the actual port (in case port 0 was used for OS-assigned port)

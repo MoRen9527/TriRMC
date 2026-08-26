@@ -118,6 +118,10 @@ def evaluate_backlog() -> tuple[list[dict], str]:
                 continue
             if d.get("domainRouting") != "server-executable":
                 continue
+            # 面路由门（2026-08-26）：R 面严格制——只取显式 face=r-face 的树
+            # （R 面生产位姿：周平面迁移等；缺省 face 视为 m-face 由 TriMMC 承接）
+            if d.get("face") != "r-face":
+                continue
             pending = [n for n in d.get("nodes", []) if n.get("status") == "pending"]
             if not pending:
                 continue

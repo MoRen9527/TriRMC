@@ -299,6 +299,15 @@ def main() -> int:
         return 1
 
     tree = actionable[0]
+    # 活动锁护栏：上轮 driven loop 仍在跑（或僵尸锁未到陈旧线）则本轮不启动，
+    # 防长审计跨 cron 周期重叠双跑（与 M 面 orchestrate_tick 对称）
+    try:
+        lk = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+        if time.time() - lk.get("ts", 0) < cfg["session_timeout_s"] * 2:
+            print("live run in progress, skip")
+            return 0
+    except Exception:
+        pass
     SHADOW.mkdir(parents=True, exist_ok=True)
     LOCK_PATH.write_text(json.dumps({"ts": time.time(), "tree": tree["treeId"]}),
                          encoding="utf-8")

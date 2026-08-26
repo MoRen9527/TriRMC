@@ -197,6 +197,8 @@ def run_trilc_task(tree: dict, cfg: dict, driven_round: int = 0, prev_summary: s
         # TC-1 内核续跑：服务端保留全上下文多轮驱动（外循环降级为保险）
         "continue_max_rounds": 4,
         "fallback_model": cfg["model"],
+        # TC-s1 FR-2：end_turn 自查拦截
+        "continue_on_incomplete": True,
         "continue_prompt": "Check the target tree file. If top-level status is done, reply exactly: DONE. Otherwise continue executing the remaining node actions until done.",
         "system": RFACE_SYSTEM_PROMPT,
         "messages": [{"role": "user",

@@ -31,6 +31,19 @@ LOCK_PATH = SHADOW / "orchestrator.lock"
 CONFIG_PATH = Path("/home/fleet/.trimetaverse/orchestration.json")
 
 TRILC_MESSAGES = "http://127.0.0.1:8711/v1/messages"
+TRILC_ENV = Path("/srv/fleet/TriLC/.env")
+
+
+def _trilc_internal_token() -> str:
+    """p0fix3 fail-closed 门适配（2026-08-28）：TriLC /v1/messages 现要求
+    X-Internal-Token——单一真源读 TriLC 自己的 .env（TRILC_INTERNAL_TOKEN）。"""
+    try:
+        for line in TRILC_ENV.read_text(encoding="utf-8").splitlines():
+            if line.startswith("TRILC_INTERNAL_TOKEN="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
 
 RFACE_SYSTEM_PROMPT = """You are an autonomous software engineering worker operating on the R-face production plane. You execute tasks end-to-end using your available tools.
 
@@ -211,7 +224,8 @@ def run_trilc_task(tree: dict, cfg: dict, driven_round: int = 0, prev_summary: s
                       + "\n\n[DRIVEN ROUND %d] 若树仍未 done：从断点继续执行，禁止重复已完成的步骤。" % driven_round}],
     }).encode()
     req = urllib.request.Request(TRILC_MESSAGES, data=body,
-                                 headers={"content-type": "application/json"},
+                                 headers={"content-type": "application/json",
+                                          "x-internal-token": _trilc_internal_token()},
                                  method="POST")
     try:
         text_parts = []

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import json
 import time
 import urllib.request
@@ -22,6 +23,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 REPO = Path("/srv/fleet/TriMetaverse")
+TC_ROOT = Path(os.environ.get("TC_GOVERNANCE_ROOT", "/srv/fleet/TriCompany"))
 PLANE = REPO / "docs/workflow/operating-records"
 SHADOW = Path("/srv/fleet/shadow-plane")
 LEDGER_PATH = SHADOW / "cost-ledger.json"
@@ -204,6 +206,53 @@ def _tree_brief(tree: dict) -> str:
     return chr(10).join(parts)
 
 
+# ── LG-016 件 3：R 面治理记忆注入（定案 2026-08-30 board-verdict-20260830-lg016）──
+# 真源即模板（CTO-1：禁独立渲染模板常驻本脚本）——从 TriCompany 真源文件程序化提取。
+# 注入物 = D-04 时刻 / D-01 落盘 / D-10 git 裸仓 三纪律全文（定案① platforms=agent-core
+# 过滤：D-11 审批/D-12 PowerShell 选型不适用不注入；FADE 不注入）。
+# 机器锚（CTO-2）：注入头部记录 TriCompany HEAD sha1-12，件 5 周检漂移比对锚格式由此定。
+# CPO-2 清点结论：旧 RFACE_SYSTEM_PROMPT 手抄条目（执行规则/工具优先级/收尾/git 合同）
+# 全部保留——三纪律注入为纯增量，零取代（清点 2026-08-30）。
+
+_GOVERNANCE_DISCIPLINE_IDS = ("D-04", "D-01", "D-10")
+
+
+def _extract_discipline(text: str, did: str) -> str:
+    pat = r"^### " + re.escape(did) + r" .*?(?=^### |^## |\Z)"
+    m = re.search(pat, text, re.M | re.S)
+    return m.group(0).strip() if m else "(%s section not found)" % did
+
+
+def _tc_head_sha12(tc_root) -> str:
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", str(tc_root), "rev-parse", "--short=12", "HEAD"],
+                             capture_output=True, text=True, timeout=15)
+        return out.stdout.strip() if out.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def build_governance_injection(tc_root=None) -> str:
+    """组装治理注入块；真源缺失时降级为警告行（不阻塞 tick）。"""
+    root = Path(tc_root) if tc_root else TC_ROOT
+    disc_path = root / "docs" / "workflow" / "engineering-disciplines.md"
+    sha12 = _tc_head_sha12(root)
+    try:
+        text = disc_path.read_text(encoding="utf-8")
+        sections = "\n\n".join(_extract_discipline(text, d) for d in _GOVERNANCE_DISCIPLINE_IDS)
+    except Exception as e:
+        sections = "(governance disciplines unavailable: %s)" % e
+    header = (
+        "\n\n---\n"
+        "# Governance memory injection (TriCompany@%s — read-at-assemble;\n"
+        "#   source of truth: %s/docs/workflow/engineering-disciplines.md,\n"
+        "#   do not copy, re-read when unsure)\n"
+        "#\n# Applicable disciplines for this Linux sandbox plane:\n\n" % (sha12, root)
+    )
+    return header + sections + "\n"
+
+
 def run_trilc_task(tree: dict, cfg: dict, driven_round: int = 0, prev_summary: str = ""):
     """POST /v1/messages to local TriRLC - agent-core loop runs the brief."""
     body = json.dumps({
@@ -217,7 +266,7 @@ def run_trilc_task(tree: dict, cfg: dict, driven_round: int = 0, prev_summary: s
         # TC-s1 FR-2：end_turn 自查拦截
         "continue_on_incomplete": True,
         "continue_prompt": "Check the target tree file. If top-level status is done, reply exactly: DONE. Otherwise continue executing the remaining node actions until done.",
-        "system": RFACE_SYSTEM_PROMPT,
+        "system": RFACE_SYSTEM_PROMPT + build_governance_injection(),
         "messages": [{"role": "user",
                       "content": _tree_brief(tree)
                       + (("\n\n[上一轮产出摘要（从此断点继续）]\n" + prev_summary) if prev_summary else "")
@@ -270,7 +319,15 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true",
                     help="监督模式：跳过冷却期（锁检查仍生效）")
+    ap.add_argument("--print-injection", action="store_true",
+                    help="LG-016 件 3 验收：打印治理注入块并退出（CPO-1 存在性断言）")
     args = ap.parse_args()
+    if args.print_injection:
+        block = build_governance_injection()
+        print(block)
+        ok = all(d in block for d in _GOVERNANCE_DISCIPLINE_IDS) and "TriCompany@" in block
+        print("[governance-injection selfcheck: %s]" % ("PASS" if ok else "FAIL"), file=sys.stderr)
+        return 0 if ok else 1
     cfg = _load_config()
     now = datetime.now(timezone.utc)
 

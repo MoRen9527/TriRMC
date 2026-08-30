@@ -227,7 +227,8 @@ def _tc_head_sha12(tc_root) -> str:
     try:
         import subprocess
         out = subprocess.run(["git", "-C", str(tc_root), "rev-parse", "--short=12", "HEAD"],
-                             capture_output=True, text=True, timeout=15)
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True, timeout=15)
         return out.stdout.strip() if out.returncode == 0 else "unknown"
     except Exception:
         return "unknown"

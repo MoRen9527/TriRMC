@@ -10,6 +10,15 @@
 - 5d40fbc：MC 服务面四件（mc-store sqlite 台账+端点接线+Unit+probe；本地 probe 6/6）
 - systemd Unit：trirmc-mc.service（8710，TRIRMC_CRON_ENABLED=false，User=fleet 声明式，Restart=on-failure，TRIRMC_MC_DB_PATH=/var/lib/trirmc-mc/mc-store.sqlite）
 
+## 执行环境四录（LG-022 勘验报告必附执行环境证据纪律；2026-09-04 复验后录）
+
+- hostname：`iZf8ziw57ydktu77fsld9yZ`
+- 仓路径：`/srv/fleet/TriRMC`
+- 服务进程 PID：`508573`（trirmc-mc.service MainPID）
+- 监听：`0.0.0.0:8710`（ss 实证 LISTEN，node pid=508573）
+
+**.env 注记（防后勘误判）**：部署面不存在 `/srv/fleet/TriRMC/.env` 亦无 `/srv/fleet/.env`——**系 Unit `Environment=` 内联注入形态**（systemctl show Environment 实证：TRIRMC_HOST/TRIRMC_PORT/TRIRMC_CRON_ENABLED/TRIRMC_CONFIG_DIR/TRIRMC_MC_DB_PATH/TRIRMC_INTERNAL_TOKEN/HOME 七键内联），非 dotenv 文件注入。「.env 不存在」≠「token 未配置」——后勘验勿以 .env 缺席断言认证缺失。
+
 ## 部署操作留痕（ssh 8.155.54.79）
 
 1. 摸底：node v22.23.2（node:sqlite 可用）；现役 trirmc.service@8712（fleet+TRIRMC_INTERNAL_TOKEN 已配）未受扰；8710 空闲；仓 HEAD 6a2a53a=本地同版

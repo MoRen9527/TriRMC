@@ -106,7 +106,8 @@ describe('Contract Resolver — resolveContracts over source-agents (14 v3)', ()
 
   it('rejects v1-shaped contracts (negative path: no compat branch)', () => {
     // v1 合同已退役（r13-2 Step 5），用自建 fixture 验证负路径
-    const legacyDir = mkdtempSync(join(resolve('..', 'TriMC'), '.tmp-v1-neg-'));
+    // 2026-09-01 代码面仓名对齐：TriMC→TriMMC（改名连带残留修，LG-031 决议同族）
+    const legacyDir = mkdtempSync(join(resolve('..', 'TriMMC'), '.tmp-v1-neg-'));
     writeFileSync(
       join(legacyDir, 'Legacy.contract.yaml'),
       [

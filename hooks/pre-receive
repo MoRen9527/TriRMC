@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# ── LG-017 pre-receive 三闸（P-a sandbox 版；设计稿 lg017-pre-receive-design-draft.md）──
+# 形态：bash+git plumbing 零依赖单脚本；拒时 stderr 输出拒因码后 exit 1。
+# 拒因词表四码：force_push_denied / identity_not_allowed / branch_protected / tag_protected。
+# 部署位（候明令）：河源 bare 仓 /srv/fleet/TriRMC.git/hooks/pre-receive——本 sandbox 版不上线。
+#
+# 身份白名单矩阵（候裁点②初版三分法；环境变量 GIT_PUSH_USER=pusher 身份）：
+#   fleet            → deploy/* infra/*（部署/基建系分支）
+#   MoRen / CTO      → dev（主分支保护：白名单身份+fast-forward 双条件）+ docs/*
+#   v* 版本 tag      → MoRen / CTO 可建（CI 系身份席未建，MoRen 暂代——候裁注记）；已建 tag 不可删改
+#   未登记身份       → 拒（fail-closed）
+set -u
+
+ZERO=0000000000000000000000000000000000000000
+PUSHER="${GIT_PUSH_USER:-}"
+
+deny() {
+  echo "LG-017 denied: $1" >&2
+  exit 1
+}
+
+allow_branch() {
+  # 分支白名单矩阵：$1=pusher $2=分支名 → 0=允许
+  case "$1" in
+    fleet)
+      case "$2" in
+        deploy/*|infra/*) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    MoRen|CTO)
+      case "$2" in
+        dev|docs/*|docs) return 0 ;;
+        deploy/*|infra/*) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+while read -r oldrev newrev refname; do
+  # ── 闸 2：身份级写控（fail-closed，先于一切）─────────────────────────────
+  case "$PUSHER" in
+    fleet|MoRen|CTO) ;;
+    *) deny "identity_not_allowed (pusher='$PUSHER' not registered)" ;;
+  esac
+
+  case "$refname" in
+    refs/heads/*)
+      branch="${refname#refs/heads/}"
+      # 分支删除拒（newrev 全零）
+      if [ "$newrev" = "$ZERO" ]; then
+        deny "force_push_denied (branch deletion not allowed: $branch)"
+      fi
+      # 身份×分支白名单
+      if ! allow_branch "$PUSHER" "$branch"; then
+        deny "branch_protected (pusher=$PUSHER not allowed on $branch)"
+      fi
+      # 防 force-push：non-fast-forward（oldrev 非零且非祖先）
+      if [ "$oldrev" != "$ZERO" ]; then
+        if ! git merge-base --is-ancestor "$oldrev" "$newrev" 2>/dev/null; then
+          deny "force_push_denied (non-fast-forward on $branch; correction via revert)"
+        fi
+      fi
+      ;;
+    refs/tags/*)
+      tag="${refname#refs/tags/}"
+      if [ "$newrev" = "$ZERO" ]; then
+        deny "tag_protected (tag deletion not allowed: $tag)"
+      fi
+      if [ "$oldrev" != "$ZERO" ]; then
+        deny "tag_protected (tag rewrite not allowed: $tag)"
+      fi
+      case "$tag" in
+        v*)
+          case "$PUSHER" in
+            MoRen|CTO) ;; # CI 系身份席未建，MoRen 暂代（候裁注记）
+            *) deny "tag_protected (pusher=$PUSHER cannot create version tag $tag)" ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+done
+
+exit 0

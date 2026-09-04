@@ -14,6 +14,7 @@ import { assemblePipelineOptions } from '../pipeline/assemble.js';
 import type { AgentContract } from '../contracts/agent-contract.js';
 import type { AgentTier } from '../agent-loop/permissions.js';
 import { arbitrate } from '../comm/arbitration.js';
+import { McStore } from '../comm/mc-store.js';
 import { MirrorStore } from '../mirror/store.js';
 import type { MirrorTaskStatus } from '../mirror/types.js';
 import {
@@ -34,6 +35,14 @@ export function createTriMCApp(env: TriMCEnv) {
   const taskController = new TaskController();
   const mirrorStore = new MirrorStore();
   const modelClient = createModelClient();
+  // LG-032 案 a 件②：MC 服务面台账（sqlite）——心跳接收/replay 仲裁 seq 连续性/
+  // tasks/result 回传三台账。sqlite 打开失败降级 null（台账缺席不阻塞服务面主链）。
+  let mcStore: McStore | null = null;
+  try {
+    mcStore = new McStore(env.mcDbPath);
+  } catch (err) {
+    console.error(`[trirmc:mc] mc-store open failed (${env.mcDbPath}): ${(err as Error).message}`);
+  }
   let server: Server | null = null;
 
   // 心跳超时扫描定时器（heartbeat-dualrun-contract v1.0 §3.3）：
@@ -97,6 +106,8 @@ export function createTriMCApp(env: TriMCEnv) {
             JSON.stringify({
               ok: true,
               service: 'trirmc',
+              // LG-032 案 a：MC 服务面台账自检（sqlite 打开成功=ok）
+              mcLedger: mcStore ? 'ok' : 'unavailable',
               cron: cronStatus
                 ? {
                     enabled: cronStatus.running,
@@ -394,12 +405,26 @@ export function createTriMCApp(env: TriMCEnv) {
             return;
           }
 
-          if (body.status === 'success') {
-            taskController.completeTask(lookupId, body.result ?? '');
-            console.log(`[trimc:task] result received: task=${lookupId} status=success`);
-          } else {
-            taskController.failTask(lookupId, body.error ?? 'task_error');
-            console.log(`[trimc:task] result received: task=${lookupId} status=failed error=${body.error ?? 'unknown'}`);
+          // LG-032 案 a 容错加固：completeTask/failTask 对未知 taskId 会 throw——
+          // 回调面必须恒返 JSON（TriRLC 回调消费端），异常不炸 socket。
+          try {
+            if (body.status === 'success') {
+              taskController.completeTask(lookupId, body.result ?? '');
+              console.log(`[trimc:task] result received: task=${lookupId} status=success`);
+            } else {
+              taskController.failTask(lookupId, body.error ?? 'task_error');
+              console.log(`[trimc:task] result received: task=${lookupId} status=failed error=${body.error ?? 'unknown'}`);
+            }
+          } catch (err) {
+            // 未知任务（TriLC 本地会话回调等）落台账记录即可，不作为服务面错误
+            console.warn(`[trimc:task] result for unknown task ${lookupId}: ${(err as Error).message}`);
+          }
+
+          // LG-032 案 a 件②：回传台账落 sqlite（回调面切换后 TriRMC 侧对账源）。
+          try {
+            mcStore?.recordTaskResult(body);
+          } catch (err) {
+            console.error(`[trirmc:mc] task-result ledger write failed: ${(err as Error).message}`);
           }
 
           res.writeHead(200, { 'content-type': 'application/json' });
@@ -561,15 +586,44 @@ export function createTriMCApp(env: TriMCEnv) {
           if (hb.nodeId) {
             mirrorStore.recordNodeHeartbeat(hb.nodeId, hb.state ?? 'unknown-state');
           }
+          // LG-032 案 a 件②：心跳台账落 sqlite（验证门读数源）。
+          try {
+            mcStore?.recordHeartbeat({
+              nodeId: hb.nodeId ?? 'unknown',
+              state: hb.state,
+              queueSize: hb.queueSize,
+              uptimeSeconds: hb.uptimeSeconds,
+              agentCoreVersion: hb.agentCoreVersion,
+            });
+          } catch (err) {
+            console.error(`[trirmc:mc] heartbeat ledger write failed: ${(err as Error).message}`);
+          }
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(
             JSON.stringify({
               ok: true,
               serverTime: Date.now(),
               nodeId: hb.nodeId ?? 'unknown',
+              // v1 载荷（pull-on-heartbeat 案 a-1 选型）：暂无下派待办，恒空数组；
+              // pendingCommands 为方案表字段名，commands 为历史兼容别名（同值）。
+              pendingCommands: [] as string[],
               commands: [] as string[],
             }),
           );
+          return;
+        }
+
+        // ── GET /internal/v1/events/seq-report（LG-032 案 a 验证门读数：replay seq 连续性）──
+        if (req.url?.startsWith('/internal/v1/events/seq-report') && req.method === 'GET') {
+          const urlObj = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
+          const nodeId = urlObj.searchParams.get('nodeId');
+          if (!nodeId || !mcStore) {
+            res.writeHead(!mcStore ? 503 : 400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(!mcStore ? { ok: false, error: 'mc_ledger_unavailable' } : { ok: false, error: 'nodeId_required' }));
+            return;
+          }
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, report: mcStore.seqGapReport(nodeId) }));
           return;
         }
 
@@ -623,6 +677,12 @@ export function createTriMCApp(env: TriMCEnv) {
             return;
           }
           const result = arbitrate(body.nodeId, body.events as Array<{ eventId: string; type: string; timestamp: number; seqNo: number; payload: unknown }>);
+          // LG-032 案 a 件②：仲裁存储落 sqlite（eventId 幂等+seq 连续性读数源）。
+          try {
+            mcStore?.recordReplayBatch(body.nodeId, body.connectionId ?? '', body.events as never, result.conflicts);
+          } catch (err) {
+            console.error(`[trirmc:mc] replay ledger write failed: ${(err as Error).message}`);
+          }
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(
             JSON.stringify({
@@ -707,6 +767,7 @@ export function createTriMCApp(env: TriMCEnv) {
         });
         server = null;
       }
+      mcStore?.close();
     },
   };
 }

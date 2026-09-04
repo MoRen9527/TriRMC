@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+
 export type TriMCEnv = {
   port: number;
   tristacissBaseUrl: string;
@@ -18,9 +20,14 @@ export type TriMCEnv = {
   /** 模型 default 三级解析最高优先（TRIRMC_DEFAULT_MODEL，i4-2 §四）；
    *  不设 → applied bundle model.defaultModel → 兜底常量。 */
   defaultModel?: string;
+  /** LG-032 案 a 件②：MC 服务面台账 sqlite 路径（TRIRMC_MC_DB_PATH）。
+   *  不设 → $TRIRMC_CONFIG_DIR/mc-store.sqlite；部署面 trirmc-mc.service 独立实例
+   *  与现有 trirmc.service 各持一份 db（WAL 多进程安全，仍按实例分文件零共享）。 */
+  mcDbPath: string;
 };
 
 export function readEnv(): TriMCEnv {
+  const configDir = process.env.TRIRMC_CONFIG_DIR ?? path.resolve('data');
   return {
     port: Number(process.env.TRIRMC_PORT ?? 8712),
     tristacissBaseUrl: process.env.TRISTACISS_BASE_URL ?? 'http://127.0.0.1:8008',
@@ -33,5 +40,6 @@ export function readEnv(): TriMCEnv {
     cronEnabled: process.env.TRIRMC_CRON_ENABLED !== 'false',
     cronLogDir: process.env.TRIRMC_CRON_LOG_DIR || undefined,
     defaultModel: process.env.TRIRMC_DEFAULT_MODEL || undefined,
+    mcDbPath: process.env.TRIRMC_MC_DB_PATH ?? path.join(configDir, 'mc-store.sqlite'),
   };
 }

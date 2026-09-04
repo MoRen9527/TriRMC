@@ -1,0 +1,33 @@
+# ── TriRMC MC 服务面（LG-032 案 a 件③，2026-09-04）──
+# 独立长驻实例：与现有 trirmc.service（8712，cron/迁移职责）零耦合并存。
+# - 端口 8710（TRIRMC_PORT，env 可配）
+# - TRIRMC_CRON_ENABLED=false：服务面实例零 cron（cron 归现有 trirmc.service）
+# - User=fleet 声明式（M0g 教训：禁 runuser/runAs 作业面）
+# - TRIRMC_INTERNAL_TOKEN：/internal/* 认证（值=TriRLC 出站 TRIMC_INTERNAL_TOKEN 同值双注；
+#   env 名照仓内代码真源 process.env.TRIRMC_INTERNAL_TOKEN，河源现 trirmc.service 同名先例；
+#   部署时必配——token 门在配置后强制校验，未配 401 面=部署就绪态验证项）
+# - 独立台账 db：/var/lib/trirmc-mc/mc-store.sqlite（TRIRMC_MC_DB_PATH）
+[Unit]
+Description=TriRMC MC Service Face (LG-032 case-a, /internal/v1/* + healthz)
+After=network.target
+
+[Service]
+Type=simple
+User=fleet
+Group=fleet
+WorkingDirectory=/srv/fleet/TriRMC
+ExecStart=/usr/bin/node dist/src/index.js
+Environment=TRIRMC_HOST=0.0.0.0
+Environment=TRIRMC_PORT=8710
+Environment=TRIRMC_CRON_ENABLED=false
+Environment=TRIRMC_CONFIG_DIR=/var/lib/trirmc-mc
+Environment=TRIRMC_MC_DB_PATH=/var/lib/trirmc-mc/mc-store.sqlite
+Environment=TRIRMC_INTERNAL_TOKEN=REPLACE_WITH_TOKEN_AT_DEPLOY
+# 注意：TriRLC 侧出站头注入 env 名为 TRIMC_INTERNAL_TOKEN（trimc-auth.ts），与本处
+# TRIRMC_INTERNAL_TOKEN（TriRMC 入站校验）是两个注入位、同一 token 值（LG-032 案 a-3）。
+Environment=HOME=/home/fleet
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

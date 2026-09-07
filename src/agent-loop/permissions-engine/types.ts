@@ -125,6 +125,8 @@ export interface DecisionContext {
 export interface SafetyCheckResult {
   /** True if the operation requires explicit confirmation regardless of mode */
   triggered: boolean;
+  /** LG-026 P4-e-fix：true=直拒语义（系统路径等），管线 deny 非 ask */
+  blocked?: boolean;
   /** Human-readable reason describing the safety concern */
   reason?: string;
 }

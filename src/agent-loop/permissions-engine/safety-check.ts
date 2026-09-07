@@ -2,6 +2,11 @@
 // CTO-003 P4T1: Absorbed from Claude Code 2.1.88 vendor (permissions.ts Step 1g).
 // Bypass-immune safety checks that fire in ALL permission modes.
 // These protect critical project infrastructure regardless of mode.
+//
+// LG-026 P4-e-fix（2026-09-08，BOD 深夜窗）：write 路径边界三件——
+// ①SYSTEM_PATH_DENY 清单（系统路径→blocked=true，管线直 deny 非 ask）；
+// ②工作目录白名单（写工具 cwd 外绝对路径→triggered confirm）；
+// ③（deny 语义在 decision-pipeline：policy deny 免高源 allow 压制）。
 
 import type { SafetyCheckResult } from './types.js';
 
@@ -13,6 +18,24 @@ const SENSITIVE_PATHS = [
   '.git\\',
   '.claude/',
   '.claude\\',
+];
+
+/** 系统路径 deny 清单（e-fix 动作①：命中即 blocked，直拒非确认）。 */
+const SYSTEM_PATH_DENY_PREFIXES = [
+  '/etc/',
+  '/etc',
+  '/sys/',
+  '/proc/',
+  '/boot/',
+  '/dev/',
+  '/usr/',
+  '/bin/',
+  '/sbin/',
+  '/lib/',
+  '/root/',
+  'c:/windows',
+  'c:/program files',
+  'c:/program files (x86)',
 ];
 
 /** Shell config files that trigger bypass-immune safety check. */
@@ -52,16 +75,27 @@ const TASK_TOOL = 'task';
  * These checks fire in ALL permission modes (including bypassPermissions).
  * They protect critical infrastructure: .git/, .claude/, shell configs.
  *
- * @returns SafetyCheckResult with triggered=true if the operation needs explicit confirmation.
+ * LG-026 P4-e-fix：*cwd* 传入时启用写路径白名单——写工具目标为 cwd 外绝对
+ * 路径 → triggered（confirm）；系统路径清单命中 → blocked（管线直 deny）。
+ *
+ * @returns SafetyCheckResult with triggered=true if the operation needs explicit confirmation,
+ *          blocked=true if it must be denied outright (system path).
  */
 export function runSafetyCheck(
   toolName: string,
   args: Record<string, unknown>,
+  cwd?: string,
 ): SafetyCheckResult {
   // File-modifying tools: check for sensitive paths
   if (FILE_MODIFYING_TOOLS.has(toolName)) {
     const pathResult = checkSensitiveFilePaths(args);
     if (pathResult.triggered) return pathResult;
+    // e-fix 动作①：系统路径 deny 清单（bypass-immune，直拒语义）
+    const sysResult = checkSystemPathDeny(args);
+    if (sysResult.triggered) return sysResult;
+    // e-fix 动作①：工作目录白名单（cwd 外绝对路径写 → confirm）
+    const boundaryResult = checkWritePathBoundary(args, cwd);
+    if (boundaryResult.triggered) return boundaryResult;
   }
 
   // Shell execution: check for shell config modifications
@@ -81,6 +115,41 @@ export function runSafetyCheck(
 }
 
 // ── Sensitive File Path Detection ──
+
+/** 系统路径 deny 检测（e-fix 动作①：blocked=直拒语义）。 */
+function checkSystemPathDeny(args: Record<string, unknown>): SafetyCheckResult {
+  const filePath = extractFilePath(args);
+  if (!filePath) return { triggered: false };
+  const normalized = filePath.toLowerCase().replace(/\\/g, '/');
+  for (const prefix of SYSTEM_PATH_DENY_PREFIXES) {
+    if (normalized === prefix.replace(/\/$/, '') || normalized.startsWith(prefix)) {
+      return {
+        triggered: true,
+        blocked: true,
+        reason: `Write targets system path "${prefix}" — denied outright (LG-026 P4-e-fix path boundary).`,
+      };
+    }
+  }
+  return { triggered: false };
+}
+
+/** 工作目录白名单检测（e-fix 动作①：cwd 外绝对路径写 → confirm）。 */
+function checkWritePathBoundary(args: Record<string, unknown>, cwd?: string): SafetyCheckResult {
+  if (!cwd) return { triggered: false };
+  const filePath = extractFilePath(args);
+  if (!filePath) return { triggered: false };
+  // 相对路径=按 cwd 解析（引擎 cwd 内），放行到规则层
+  if (!filePath.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(filePath)) return { triggered: false };
+  const normalizedPath = filePath.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalizedCwd = cwd.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+  if (normalizedPath.startsWith(normalizedCwd + '/') || normalizedPath === normalizedCwd) {
+    return { triggered: false };
+  }
+  return {
+    triggered: true,
+    reason: `Write target "${filePath}" is outside working directory "${cwd}" — explicit confirmation required (LG-026 P4-e-fix path boundary).`,
+  };
+}
 
 function checkSensitiveFilePaths(args: Record<string, unknown>): SafetyCheckResult {
   const filePath = extractFilePath(args);

@@ -676,6 +676,15 @@ export function createTriMCApp(env: TriMCEnv) {
             res.end(JSON.stringify({ error: 'missing_nodeId_or_events' }));
             return;
           }
+          // LG-026 P4 a-harden（BOD 裁示 2026-09-08）：eventId 存在性前置校验——
+          // 防「accepted 假成功+台账静默缺行」（undefined eventId 绑定失败被
+          // try/catch 吞成 warning 的假成功形态，P4 a 项实勘）。
+          const invalidEvents = (body.events as Array<{ eventId?: unknown }>).filter((e) => !e || typeof e.eventId !== 'string' || !e.eventId);
+          if (invalidEvents.length > 0) {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'invalid_event_payload', detail: `${invalidEvents.length} event(s) missing eventId` }));
+            return;
+          }
           const result = arbitrate(body.nodeId, body.events as Array<{ eventId: string; type: string; timestamp: number; seqNo: number; payload: unknown }>);
           // LG-032 案 a 件②：仲裁存储落 sqlite（eventId 幂等+seq 连续性读数源）。
           try {

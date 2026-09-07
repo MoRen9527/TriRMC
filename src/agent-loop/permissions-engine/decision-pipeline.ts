@@ -36,11 +36,12 @@ export function decide(context: DecisionContext): DecisionResult {
   if (askResult) return askResult;
 
   // Step 3: Safety Check (bypass-immune — fires even in bypassPermissions mode)
-  const safetyResult = runSafetyCheck(context.toolName, context.toolArgs);
+  // LG-026 P4-e-fix：cwd 传入启用写路径白名单；blocked=true（系统路径）→直 deny。
+  const safetyResult = runSafetyCheck(context.toolName, context.toolArgs, context.cwd);
   if (safetyResult.triggered) {
     return {
       allowed: false,
-      behavior: 'ask',
+      behavior: safetyResult.blocked ? 'deny' : 'ask',
       reason: safetyResult.reason,
       decidedBy: 'safety_check',
     };
@@ -118,6 +119,7 @@ function checkDenyRules(
   for (const rule of rules) {
     if (rule.behavior === 'deny' && ruleMatches(rule, toolName, args)) {
       // Check if a higher-priority allow rule also matches (source priority beats behavior)
+      // LG-026 P4-e-fix：policySettings 源 deny=安全策略语义，免高源 allow 压制（deny 永远赢）。
       const denySourceScore = RULE_SOURCE_SCORE[rule.source] ?? 0;
       const hasHigherAllow = rules.some(
         (r) =>
@@ -125,7 +127,7 @@ function checkDenyRules(
           ruleMatches(r, toolName, args) &&
           (RULE_SOURCE_SCORE[r.source] ?? 0) > denySourceScore,
       );
-      if (hasHigherAllow) continue;
+      if (hasHigherAllow && rule.source !== 'policySettings') continue;
 
       return {
         allowed: false,

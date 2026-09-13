@@ -44,3 +44,22 @@ Useful commands:
 
 - `npm run check`
 - `npm test`
+
+## Deployment Topology (BOD SSH survey 2026-09-13 22:4x)
+
+> **Naming note**: This README still uses pre-rename names (TriMC/copilot-host/Tride/TriLC).
+> Full rename to TriRMC terminology is a pending work item (tracked in LG-035).
+> The deployment topology below uses current names.
+
+| Entity | Domain binding | Host | Region | Deploy path | Port | CLI |
+| --- | --- | --- | --- | --- | --- | --- |
+| TriMMC (M面) | sg | sg-ecs-server | ap-southeast-1 (Singapore) | /srv/fleet/TriMMC | 8710 | trimmc chat |
+| TriRMC (R面) | 河源 | sg-ecs-server (同机) | ap-southeast-1 (Singapore) | /srv/fleet/TriRMC | — | trirmc chat (待建) |
+| TriRLC (本地) | 本机 | TABLET-0BGCRCP5 | — | D:\Code\ai\TriRLC | 8711 | trirlc chat |
+| TriMLC (本地通道) | 本机 | TABLET-0BGCRCP5 (同机) | — | %LOCALAPPDATA%\trilc-channel | 8713 | trimlc chat |
+
+- **sg 与河源 = 同机双域名**（sg-ecs-server 绑 TriMMC/M 面 + 河源绑 TriRMC/R 面）；M/R 分机部署为终态。
+- TriRMC deploy: fleet 属主, /srv/fleet/TriRMC, 2026-08-27 15:21（非 git 工作拷贝）。
+- TriMMC deploy: 同机 TriMMC(8710) 端口共存。
+- CLI 正名四件（trimlc/trirlc/trimmc/trirmc）：候专项窗（CEO 22:36 口谕）。
+- README 全面重写（旧名旧概念→TriRMC 正名体系）：候办（LG-035 登记）。

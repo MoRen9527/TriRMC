@@ -62,7 +62,7 @@ Useful commands:
 
 - **sg 与河源 = 两台独立阿里云 ECS 实例**（M-SG-47.245.122.61 ap-southeast-1 新加坡 / R-HY-8.155.54.79 cn-heyuan 广东海源）——非同机双域名。
 - TriRMC deploy: fleet 属主, R-HY /srv/fleet/TriRMC, 2026-08-27 15:21（非 git 工作拷贝）。
-- sg 机上 /srv/fleet/TriRMC 目录=旧镜像/开发副本性质候定性（权威 R 面部署位=R-HY 机）。
+- sg 机上 /srv/fleet/TriRMC 目录=已于 2026-09-13 归档下架（BOD 亲办：mv 至 M-SG /srv/fleet/.quarantine/TriRMC-stale-20260913，附 README 复原说明；复原=mv 回原位）。
 - R-HY 侧 8710/8711/8712 三监听端口定性候勘（为何 R 面机上有 8710/M 面端口——残留或双角色，实勘回报）。
 - CLI 正名四件（trimlc/trirlc/trimmc/trirmc）：候专项窗（CEO 22:36 口谕）。
 - README 全面重写（旧名旧概念→TriRMC 正名体系）：候办（LG-035 登记）。

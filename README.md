@@ -67,3 +67,14 @@ Useful commands:
 - CLI 正名四件（trimlc/trirlc/trimmc/trirmc）：候专项窗（CEO 22:36 口谕）。
 - README 全面重写（旧名旧概念→TriRMC 正名体系）：候办（LG-035 登记）。
 - 定名规则入工程纪律册：CEO 立规「以后机器一律 M-SG-ip / R-HY-ip 式命名，防面与名搞错」。
+
+### 四域核心对照表（CEO 00:00 定谳）
+
+| 四格 | 面 | 域 | 核心 daemon | 端口 | CLI |
+| --- | --- | --- | --- | --- | --- |
+| TriMMC | M 面 | 服务域（sg） | M-SG-47.245.122.61 | 8710 | trimmc chat |
+| TriMLC | M 面 | 本地域（本机） | TABLET-0BGCRCP5 | 8713 | trimlc chat |
+| TriRMC | R 面 | 服务域（河源 R-HY） | R-HY-8.155.54.79 | 8710/8711/8712 | trirmc chat（待建） |
+| TriRLC | R 面 | 本地域（本机） | TABLET-0BGCRCP5 | 8711 | trirlc chat |
+
+- 四格各一核心，面×域绑定写死（CEO 00:00 定谳）；本地周平面回流自动化宿主=**8713 TriMLC cron**（BOD 22:36 误派 8711 已勘正）。

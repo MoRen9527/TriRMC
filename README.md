@@ -66,7 +66,7 @@ Useful commands:
 - R-HY 侧 8710/8711/8712 三监听端口定性候勘（为何 R 面机上有 8710/M 面端口——残留或双角色，实勘回报）。
 - CLI 正名四件（trimlc/trirlc/trimmc/trirmc）：候专项窗（CEO 22:36 口谕）。
 - README 全面重写（旧名旧概念→TriRMC 正名体系）：候办（LG-035 登记）。
-- **Git hub 拓扑**：R-HY origin=sg-bare（全局标准非个例：GitHub ↔ M-SG（唯一中枢，M 面服务域机）↔ {本地机（TriMLC+TriRLC 双本地核心同机承载）、R-HY（R 面服务器）、未来任何新机}，详见 TriMetaverse/docs/github-repo-governance.md）。
+- **Git hub 拓扑**：R-HY origin=sg-bare（全局标准非个例：GitHub ↔ M-SG（唯一中枢，M 面服务域机）↔ {本地机（TriMLC+TriRLC 双本地核心同机承载）、R-HY（R 面服务域机）、未来任何新机}，详见 TriMetaverse/docs/github-repo-governance.md）。
 - 定名规则入工程纪律册：CEO 立规「以后机器一律 M-SG-ip / R-HY-ip 式命名，防面与名搞错」。
 
 ### 四域核心对照表（CEO 00:00 定谳）

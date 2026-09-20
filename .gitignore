@@ -15,3 +15,5 @@ coverage/
 
 # Python cache
 __pycache__/data/
+__pycache__/
+data/

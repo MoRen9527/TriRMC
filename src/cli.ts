@@ -434,9 +434,117 @@ async function runModelCommand(restArgs: string[]): Promise<void> {
   process.exitCode = await runCli(restArgs, io);
 }
 
+// ── LG-058 P1 config 卡面命令族（daemon 进程内执行；CLI=触发器）──
+// 形态对标 TriRLC/TriMLC config 家族（N4）；本仓 cronRequest 无 token 面
+// （RLC 同族既有缺口，候修不属本席）——本命令族按门契约独立带
+// TRIRMC_INTERNAL_TOKEN。梯语义=§4.3 层级合并裁：env 逃生门 > 卡面 cache
+// （fresh/stale-grace）> fleet bundle > 常量兜底。
+
+async function configRequest(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
+  const token = process.env.TRIRMC_INTERNAL_TOKEN ?? '';
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (token) headers['x-internal-token'] = token;
+  let res: Response;
+  try {
+    res = await fetch(`${serviceUrl()}${path}`, {
+      method,
+      headers,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`daemon 无响应（${serviceUrl()}）——先起 trirmc daemon 再试 (${msg})`);
+  }
+  const json = await res.json().catch(() => ({})) as Record<string, unknown>;
+  if (res.status === 401) {
+    // 本仓门=opt-in（TRIRMC_INTERNAL_TOKEN 未设=/internal/* 开放，既有形态）；
+    // 401 实际只发生于 token 不一致。
+    throw new Error('鉴权失败：TRIRMC_INTERNAL_TOKEN 未设置或与 daemon 不一致');
+  }
+  if (!res.ok) {
+    throw new Error(json && 'error' in json ? String(json.error) : `HTTP ${res.status}`);
+  }
+  return json;
+}
+
+function ts(n: unknown): string {
+  return typeof n === 'number' && n > 0 ? new Date(n).toISOString() : '-';
+}
+
+async function cmdConfig(args: string[]): Promise<void> {
+  const sub = args[0] ?? 'show';
+  try {
+    switch (sub) {
+      case 'pull': {
+        const r = await configRequest('POST', '/internal/v1/config/pull') as {
+          ok?: boolean; mode?: string; defaultModel?: string | null; source?: string;
+          message?: string; attribution?: string | null;
+        };
+        console.log(`config pull: ${r.ok ? 'OK' : 'FAILED'} (mode=${r.mode})`);
+        console.log(`  default model: ${r.defaultModel ?? '-'}   source: ${r.source}`);
+        console.log(`  ${r.message ?? ''}`);
+        if (r.attribution) console.log(`  attribution: ${r.attribution}`);
+        if (!r.ok) process.exitCode = 1;
+        break;
+      }
+      case 'show':
+      case 'cache': {
+        if (sub === 'cache' && args[1] === 'clear') {
+          const r = await configRequest('DELETE', '/internal/v1/config/cache') as {
+            hadCache?: boolean; removedFiles?: string[];
+          };
+          console.log(`config cache clear: done (hadCache=${!!r.hadCache}, removed=${(r.removedFiles ?? []).length} file(s))`);
+          console.log('  梯语义验证：接 `config pull` 强制回 tier1；daemon env 现值待下次成功 pull 覆盖');
+          break;
+        }
+        const r = await configRequest('GET', '/internal/v1/config/show') as {
+          face?: string; hasCache?: boolean; fresh?: boolean; staleGrace?: boolean;
+          defaultModel?: string | null; effectiveModel?: string | null; effectiveSource?: string;
+          fetchedAt?: number | null; expiresAt?: number | null; refreshIntervalS?: number | null;
+          providerCount?: number; providers?: string[];
+          lastFetchAt?: number | null; lastFetchError?: string | null; lastAttribution?: string | null;
+          ladder?: { model?: string; source?: string } | null;
+        };
+        console.log(`config show (face=${r.face}):`);
+        console.log(`  effective model: ${r.effectiveModel ?? '-'}   source: ${r.effectiveSource}`);
+        if (r.hasCache) {
+          console.log(`  cache: ${r.fresh ? 'fresh' : r.staleGrace ? 'stale-grace (tier2.5)' : 'expired'}  fetched ${ts(r.fetchedAt)}  expires ${ts(r.expiresAt)}  refresh=${r.refreshIntervalS ?? '-'}s`);
+          console.log(`  providers(${r.providerCount}): ${(r.providers ?? []).join(', ') || '-'}`);
+        } else {
+          console.log('  cache: none (bundle/env 梯语义)');
+        }
+        if (r.ladder) {
+          console.log(`  ladder(§4.3): model=${r.ladder.model ?? '-'}  source=${r.ladder.source ?? '-'}  (env 逃生门 > 卡面 > fleet bundle > 常量)`);
+        }
+        console.log(`  last fetch: ${ts(r.lastFetchAt)}${r.lastFetchError ? `  error: ${r.lastFetchError}` : ''}${r.lastAttribution ? `  attribution: ${r.lastAttribution}` : ''}`);
+        break;
+      }
+      case 'verify': {
+        const r = await configRequest('POST', '/internal/v1/config/verify') as {
+          ok?: boolean; connectivity?: string; credentials?: string; decryptHealth?: string;
+          cardPresent?: boolean; defaultModel?: string | null; providers?: number; message?: string;
+        };
+        console.log(`config verify: ${r.ok ? 'HEALTHY' : 'UNHEALTHY'}`);
+        console.log(`  connectivity: ${r.connectivity}   credentials: ${r.credentials}   decrypt: ${r.decryptHealth}`);
+        console.log(`  card_present: ${r.cardPresent}   default model: ${r.defaultModel ?? '-'}   providers: ${r.providers ?? 0}`);
+        console.log(`  ${r.message ?? ''}`);
+        if (!r.ok) process.exitCode = 1;
+        break;
+      }
+      default:
+        console.error(`ERROR: unknown config subcommand '${sub}'. Usage: trirmc config <pull|show|verify|cache [clear]>`);
+        process.exitCode = 1;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`ERROR: ${msg}`);
+    process.exitCode = 1;
+  }
+}
+
 // ── dispatch ────────────────────────────────────────────────────
 
-const USAGE = `Usage: trirmc <cron|config-sync|model> ...
+const USAGE = `Usage: trirmc <cron|config-sync|config|model> ...
 
   cron add    --name <n> --cron "<expr>" [--tz <tz>] --command <cmd> --cwd <dir>
               [--run-as <user>] [--timeout <ms>] [--disabled]
@@ -446,6 +554,8 @@ const USAGE = `Usage: trirmc <cron|config-sync|model> ...
 
   config-sync apply [--fleet-root <dir>] [--config-dir <dir>]
                                         (apply the fleet five-dim sync bundle)
+
+  config <pull|show|verify|cache [clear]>  (TriModel 卡面配置族 LG-058；梯=§4.3)
 
   model <restore-direct|config|status>   (TriModel 兜底直连恢复梯命令族；无参=help)`;
 
@@ -465,6 +575,10 @@ async function main(): Promise<void> {
   }
   if (argv[0] === 'cron' && argv.length === 1) {
     console.log(USAGE);
+    return;
+  }
+  if (argv[0] === 'config') {
+    await cmdConfig(argv.slice(1));
     return;
   }
   if (argv[0] === 'config-sync') {

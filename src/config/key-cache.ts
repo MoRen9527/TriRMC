@@ -172,6 +172,8 @@ class EncryptedKeyStorage implements KeyStorage {
       // CTO 裁 1(乙)（de6d49f8）：decrypt_failed daemon 侧 emit 点——cache 域
       // 不匹配（跨机复制）=此卡在本消费机未生效，回写 failed+归因码（§3.3；
       // admin 凭据缺席自动跳过，非阻塞）。
+      // N1：此处不带 tier——decrypt_failed 时点后续 pull 未决（pull ok→applied
+      // tier1 覆盖；pull 败→pull_denied 回写带 tier2/3），层级留待结果回写定论。
       void reportCardStatus('failed', 'decrypt_failed');
       return null;
     }
@@ -393,7 +395,10 @@ async function fetchConfigFromCardApi(apiUrl: string, apiToken?: string): Promis
 
 // ── status 回写（§三 时序：生效读数回写既有通道；可选增强，admin 凭据缺席=跳过）──
 
-async function reportCardStatus(state: 'applied' | 'failed', error?: string): Promise<void> {
+// LG-058 N1：tier=当前生效配置层级（1=卡面拉取 / 2=本地缓存含 stale 宽限 /
+// 3=出厂默认，对表降级梯注释）——「拉取成败」与「现在用的是第几层」两语义分立：
+// state 答 tier1 拉取结果，tier 答 daemon 当前实际生效层，随回写同报。
+async function reportCardStatus(state: 'applied' | 'failed', error?: string, tier?: 1 | 2 | 3): Promise<void> {
   const adminToken = process.env.TRIMODEL_ADMIN_TOKEN;
   if (!_apiUrl || !adminToken) return; // 凭据缺席=静默跳过（server 台账已记 pull 结果）
   try {
@@ -404,7 +409,7 @@ async function reportCardStatus(state: 'applied' | 'failed', error?: string): Pr
         method: 'PUT',
         signal: controller.signal,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify({ state, ...(error ? { error } : {}) }),
+        body: JSON.stringify({ state, ...(error ? { error } : {}), ...(tier ? { tier } : {}) }),
       });
       if (!res.ok) {
         console.warn(`[trirmc:keys] status report ${state} → ${res.status} (non-blocking)`);
@@ -532,13 +537,14 @@ export async function initKeyCache(apiUrl: string, dataDir: string, apiToken?: s
     recordFetchSuccess();
     console.log(`[trirmc:keys] pulled fresh config (${Object.keys(pull.keys).length} providers):`, sanitizeKeysForLog(_keyCache));
     // §三 时序：生效读数回写（applied）——fire-and-forget，admin 凭据缺席=跳过
-    void reportCardStatus('applied');
+    void reportCardStatus('applied', undefined, 1);
   } else {
     recordFetchFailure(new Error(pull.message), pull.attribution);
     // 拉取被拒 → 回写 failed+归因码（方案 §3.3「回写 failed 时附归因码」；
-    // server 台账已记 denied，本回写=卡状态面同显，凭据缺席自动跳过）
+    // server 台账已记 denied，本回写=卡状态面同显，凭据缺席自动跳过）。
+    // N1：tier=当前生效层——有缓存（含 stale 宽限）=tier2 续用，无缓存=tier3。
     if (pull.attribution === 'pull_denied') {
-      void reportCardStatus('failed', 'pull_denied');
+      void reportCardStatus('failed', 'pull_denied', _keyCache ? 2 : 3);
     }
     if (_keyCache) {
       console.warn(`[trirmc:keys] pull failed, using cached config (attribution: ${pull.attribution ?? 'network'}): ${pull.message}`);
@@ -602,8 +608,9 @@ async function doRefresh(apiUrl: string, apiToken?: string): Promise<RefreshMode
   }
   if (!pull.ok) {
     recordFetchFailure(new Error(pull.message), pull.attribution);
+    // N1：tier=当前生效层（同 initKeyCache 口径——缓存续用=2，无缓存=3）
     if (pull.attribution === 'pull_denied') {
-      void reportCardStatus('failed', 'pull_denied');
+      void reportCardStatus('failed', 'pull_denied', _keyCache ? 2 : 3);
     }
     console.warn(`[trirmc:keys] refresh failed (attribution: ${pull.attribution ?? 'network'}): ${pull.message}`);
     return 'failed';
@@ -619,7 +626,7 @@ async function doRefresh(apiUrl: string, apiToken?: string): Promise<RefreshMode
   _storage?.write(_keyCache);
   recordFetchSuccess();
   console.log(`[trirmc:keys] refreshed config:`, sanitizeKeysForLog(_keyCache));
-  void reportCardStatus('applied');
+  void reportCardStatus('applied', undefined, 1);
   // TK-011: Notify external consumers of updated key cache
   if (_onKeyCacheUpdated) {
     try {

@@ -162,14 +162,51 @@ describe('LG-058 N3 config-cache 泛化', () => {
         const st = getKeyCacheStatus();
         assert.equal(st.lastAttribution, 'pull_denied');
         assert.equal(st.lastFetchError, 'TriModel card pull denied (401)');
-        // pull_denied → 回写 failed+归因码（§3.3；admin 在场故发出）
+        // pull_denied → 回写 failed+归因码（§3.3；admin 在场故发出）。
+        // LG-058 N1：无 cache 被拒 → 当前生效层级=tier3（出厂默认）随回写同报。
         await new Promise((r) => setTimeout(r, 30));
         assert.equal(statusCalls.length, 1);
-        assert.deepEqual(statusCalls[0].body, { state: 'failed', error: 'pull_denied' });
+        assert.deepEqual(statusCalls[0].body, { state: 'failed', error: 'pull_denied', tier: 3 });
         assert.ok(statusCalls[0].url.includes('/v1/config/cards/rmc/status'));
       } finally {
         stopKeyCache();
         restoreFetch();
+      }
+    } finally {
+      restore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('LG-058 N1：pull ok → status 回写 applied+tier=1（当前层级=卡面拉取）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'trirmc-kc-n1-'));
+    const restore = pinSandboxEnv();
+    process.env.TRIMODEL_ADMIN_TOKEN = 'admin-sandbox';
+    try {
+      const statusBodies: unknown[] = [];
+      const restoreFetch = withMockFetch(async (input, init) => {
+        const url = String(input);
+        if (url.includes('/status')) {
+          statusBodies.push(JSON.parse(String(init?.body ?? '{}')));
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          object: 'config.card-pull', face: 'rmc', card_present: true,
+          default_model: 'deepseek-v4-pro',
+          entries: pullEntriesFixture(),
+          strategy: { id: 's1', name: 'sandbox-strategy', rule_ids: ['r1'] },
+          refresh_interval_s: 900,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      try {
+        await initKeyCache('http://127.0.0.1:3333', dir, 'tok');
+        await new Promise((r) => setTimeout(r, 30));
+        assert.equal(statusBodies.length, 1, 'pull ok → applied 回写恰一条');
+        assert.deepEqual(statusBodies[0], { state: 'applied', tier: 1 });
+      } finally {
+        stopKeyCache();
+        restoreFetch();
+        delete process.env.TRIMODEL_ADMIN_TOKEN;
       }
     } finally {
       restore();

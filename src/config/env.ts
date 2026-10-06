@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { settingOrEnv } from './local-settings.js';
 
 export type TriMCEnv = {
   port: number;
@@ -28,18 +29,21 @@ export type TriMCEnv = {
 
 export function readEnv(): TriMCEnv {
   const configDir = process.env.TRIRMC_CONFIG_DIR ?? path.resolve('data');
+  // LG-058 N5 方案三：「效」步兑现点——boot 型键经 settingOrEnv 读取
+  // （env 钉定优先防误推解除钉定；settings.json 表单值补 env 未钉位；
+  // 本文件项重启/进程重启后生效——R-HY 升版流水线 restart 即效步）。
   return {
-    port: Number(process.env.TRIRMC_PORT ?? 8712),
-    tristacissBaseUrl: process.env.TRISTACISS_BASE_URL ?? 'http://127.0.0.1:8008',
-    openclawGatewayUrl: process.env.OPENCLOW_GATEWAY_URL ?? 'ws://127.0.0.1:8822',
-    vscodiumGlueBaseUrl: process.env.VSCODIUM_GLUE_BASE_URL ?? 'http://127.0.0.1:8730',
-    cwd: process.env.TRIRMC_CWD ?? process.cwd(),
-    memdirPath: process.env.TRIRMC_MEMDIR || undefined,
-    runAsUser: process.env.TRIRMC_RUNAS || undefined,
-    bridgeCwd: process.env.TRIRMC_BRIDGE_CWD ?? '/srv/fleet',
-    cronEnabled: process.env.TRIRMC_CRON_ENABLED !== 'false',
-    cronLogDir: process.env.TRIRMC_CRON_LOG_DIR || undefined,
-    defaultModel: process.env.TRIRMC_DEFAULT_MODEL || undefined,
-    mcDbPath: process.env.TRIRMC_MC_DB_PATH ?? path.join(configDir, 'mc-store.sqlite'),
+    port: Number(settingOrEnv('TRIRMC_PORT') ?? 8712),
+    tristacissBaseUrl: settingOrEnv('TRISTACISS_BASE_URL') ?? 'http://127.0.0.1:8008',
+    openclawGatewayUrl: settingOrEnv('OPENCLOW_GATEWAY_URL') ?? 'ws://127.0.0.1:8822',
+    vscodiumGlueBaseUrl: settingOrEnv('VSCODIUM_GLUE_BASE_URL') ?? 'http://127.0.0.1:8730',
+    cwd: settingOrEnv('TRIRMC_CWD') ?? process.cwd(),
+    memdirPath: settingOrEnv('TRIRMC_MEMDIR') || undefined,
+    runAsUser: settingOrEnv('TRIRMC_RUNAS') || undefined,
+    bridgeCwd: settingOrEnv('TRIRMC_BRIDGE_CWD') ?? '/srv/fleet',
+    cronEnabled: settingOrEnv('TRIRMC_CRON_ENABLED') !== 'false',
+    cronLogDir: settingOrEnv('TRIRMC_CRON_LOG_DIR') || undefined,
+    defaultModel: settingOrEnv('TRIRMC_DEFAULT_MODEL') || undefined,
+    mcDbPath: settingOrEnv('TRIRMC_MC_DB_PATH') ?? path.join(configDir, 'mc-store.sqlite'),
   };
 }

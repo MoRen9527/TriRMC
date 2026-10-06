@@ -30,6 +30,7 @@
 import { join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, copyFileSync, rmSync } from 'node:fs';
 import { encrypt, decrypt, isEncryptedFormat, canDeriveKey } from './key-encryptor.js';
+import { writeLocalSettings } from './local-settings.js';
 
 // ── Types ──
 
@@ -60,6 +61,9 @@ export interface KeyCache {
   defaultModel: string;
   /** LG-058 N3：策略摘要维度（可选=legacy keys.json cache shape 兼容）。 */
   strategy?: PullStrategySummary | null;
+  /** LG-058 N5 方案三：已成功落到本域 settings.json 的本地配置版本与内容
+   *  （=「落」步账本；写失败不推进=下轮刷新自动重试。可选=legacy shape 兼容）。 */
+  localConfig?: { version: number; items: Record<string, string> } | null;
   refreshIntervalS: number;
   fetchedAt: number;      // unix ms
   expiresAt: number;      // fetchedAt + 24h
@@ -328,7 +332,7 @@ export function keysFromPullEntries(entries: Record<string, PullEntry>): Record<
 // ── API fetch（tier1：卡面 pull 视图）──
 
 type PullOutcome =
-  | { ok: true; keys: Record<string, ProviderKey>; defaultModel: string; strategy: PullStrategySummary | null; refreshIntervalS: number; modelRelayOnly?: boolean }
+  | { ok: true; keys: Record<string, ProviderKey>; defaultModel: string; strategy: PullStrategySummary | null; refreshIntervalS: number; modelRelayOnly?: boolean; localConfig?: { version: number; items: Record<string, string> } | null }
   | { ok: false; attribution: PullAttributionCode | null; message: string };
 
 async function fetchConfigFromCardApi(apiUrl: string, apiToken?: string): Promise<PullOutcome> {
@@ -361,6 +365,8 @@ async function fetchConfigFromCardApi(apiUrl: string, apiToken?: string): Promis
       entries?: Record<string, PullEntry>;
       strategy?: PullStrategySummary | null;
       refresh_interval_s?: number;
+      // N5 方案三：本地配置直改面载荷（{version,updated_at,items} 或 null）
+      local_config?: { version?: unknown; items?: unknown } | null;
     };
 
     // 卡未配置（card_present:false）= tier1 凭据无源非故障；但 default_model=
@@ -372,10 +378,24 @@ async function fetchConfigFromCardApi(apiUrl: string, apiToken?: string): Promis
         return {
           ok: true, keys: {}, defaultModel: json.default_model,
           strategy: null, refreshIntervalS: json.refresh_interval_s ?? KEY_REFRESH_INTERVAL_S_DEFAULT,
-          modelRelayOnly: true,
+          modelRelayOnly: true, localConfig: null,
         };
       }
       return { ok: false, attribution: null, message: `TriModel card '${FACE_ID}' not configured server-side (card_present=false)` };
+    }
+
+    // N5 方案三：载荷 local_config 形守卫（畸形如实降级为 null=不落地，不炸拉取主链）
+    let localConfig: { version: number; items: Record<string, string> } | null = null;
+    if (json.local_config && typeof json.local_config === 'object'
+      && typeof (json.local_config as { version?: unknown }).version === 'number'
+      && ((json.local_config as { items?: unknown }).items ?? null) !== null
+      && typeof (json.local_config as { items?: unknown }).items === 'object') {
+      const rawItems = (json.local_config as { items: Record<string, unknown> }).items;
+      const items: Record<string, string> = {};
+      for (const [k, v] of Object.entries(rawItems)) {
+        if (typeof v === 'string') items[k] = v;
+      }
+      localConfig = { version: (json.local_config as { version: number }).version, items };
     }
 
     return {
@@ -385,6 +405,7 @@ async function fetchConfigFromCardApi(apiUrl: string, apiToken?: string): Promis
       defaultModel: json.default_model ?? 'deepseek-v4-pro',
       strategy: json.strategy ?? null,
       refreshIntervalS: json.refresh_interval_s ?? KEY_REFRESH_INTERVAL_S_DEFAULT,
+      localConfig,
     };
   } catch (err) {
     return { ok: false, attribution: null, message: err instanceof Error ? err.message : String(err) };
@@ -395,10 +416,33 @@ async function fetchConfigFromCardApi(apiUrl: string, apiToken?: string): Promis
 
 // ── status 回写（§三 时序：生效读数回写既有通道；可选增强，admin 凭据缺席=跳过）──
 
+/** N5 方案三落地回执形（对表 TriModel handlePutTrimmcCardStatus lcReport——
+ *  applied_at 由服务端自盖，daemon 不带；version_applied 报**尝试版本**，
+ *  与 write_result:'failed' 成对=「vN 落盘失败」如实读数）。 */
+interface LocalConfigReport {
+  version_applied: number;
+  write_result: 'ok' | 'failed';
+  write_error?: string;
+  file?: string;
+}
+
+/** 「落」步兑现点（方稿 §3.4：直接修改本地配置的落盘写入；不落盘=没生效）。
+ *  写失败不炸拉取主链——回执 failed 随 status 回写，UI 显「落盘失败」三态。 */
+function landLocalConfig(lc: { version: number; items: Record<string, string> } | null | undefined): LocalConfigReport | null {
+  if (!lc) return null;
+  const res = writeLocalSettings(lc.items);
+  return {
+    version_applied: lc.version,
+    write_result: res.ok ? 'ok' : 'failed',
+    ...(res.error ? { write_error: res.error.slice(0, 500) } : {}),
+    file: res.file.slice(0, 512),
+  };
+}
+
 // LG-058 N1：tier=当前生效配置层级（1=卡面拉取 / 2=本地缓存含 stale 宽限 /
 // 3=出厂默认，对表降级梯注释）——「拉取成败」与「现在用的是第几层」两语义分立：
 // state 答 tier1 拉取结果，tier 答 daemon 当前实际生效层，随回写同报。
-async function reportCardStatus(state: 'applied' | 'failed', error?: string, tier?: 1 | 2 | 3): Promise<void> {
+async function reportCardStatus(state: 'applied' | 'failed', error?: string, tier?: 1 | 2 | 3, localConfig?: LocalConfigReport): Promise<void> {
   const adminToken = process.env.TRIMODEL_ADMIN_TOKEN;
   if (!_apiUrl || !adminToken) return; // 凭据缺席=静默跳过（server 台账已记 pull 结果）
   try {
@@ -409,7 +453,12 @@ async function reportCardStatus(state: 'applied' | 'failed', error?: string, tie
         method: 'PUT',
         signal: controller.signal,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify({ state, ...(error ? { error } : {}), ...(tier ? { tier } : {}) }),
+        body: JSON.stringify({
+          state,
+          ...(error ? { error } : {}),
+          ...(tier ? { tier } : {}),
+          ...(localConfig ? { local_config: localConfig } : {}),
+        }),
       });
       if (!res.ok) {
         console.warn(`[trirmc:keys] status report ${state} → ${res.status} (non-blocking)`);
@@ -517,6 +566,7 @@ export async function initKeyCache(apiUrl: string, dataDir: string, apiToken?: s
       keys: _keyCache?.keys ?? {},
       defaultModel: pull.defaultModel,
       strategy: _keyCache?.strategy ?? null,
+      localConfig: _keyCache?.localConfig ?? null,
       refreshIntervalS: _keyCache?.refreshIntervalS ?? pull.refreshIntervalS,
       fetchedAt: Date.now(),
       expiresAt: Date.now() + KEY_CACHE_TTL_MS,
@@ -525,10 +575,17 @@ export async function initKeyCache(apiUrl: string, dataDir: string, apiToken?: s
     recordFetchSuccess();
     console.log(`[trirmc:keys] model relay (card absent): default=${pull.defaultModel}`);
   } else if (pull.ok) {
+    // N5 方案三：「落」步（方稿 §3.4 落盘兑现点）——版本变更才写 settings.json
+    // （幂等防抖：同版本重拉不重写）；写失败缓存 localConfig 不推进=下轮刷新
+    // 自动重试，回执（含 failed）随 status 同报，UI 三态如实显。
+    const lcReport = landLocalConfig(
+      pull.localConfig && pull.localConfig.version !== _keyCache?.localConfig?.version ? pull.localConfig : null,
+    );
     _keyCache = {
       keys: pull.keys,
       defaultModel: pull.defaultModel,
       strategy: pull.strategy,
+      localConfig: lcReport?.write_result === 'ok' ? pull.localConfig : (_keyCache?.localConfig ?? null),
       refreshIntervalS: pull.refreshIntervalS,
       fetchedAt: Date.now(),
       expiresAt: Date.now() + KEY_CACHE_TTL_MS,
@@ -537,7 +594,7 @@ export async function initKeyCache(apiUrl: string, dataDir: string, apiToken?: s
     recordFetchSuccess();
     console.log(`[trirmc:keys] pulled fresh config (${Object.keys(pull.keys).length} providers):`, sanitizeKeysForLog(_keyCache));
     // §三 时序：生效读数回写（applied）——fire-and-forget，admin 凭据缺席=跳过
-    void reportCardStatus('applied', undefined, 1);
+    void reportCardStatus('applied', undefined, 1, lcReport ?? undefined);
   } else {
     recordFetchFailure(new Error(pull.message), pull.attribution);
     // 拉取被拒 → 回写 failed+归因码（方案 §3.3「回写 failed 时附归因码」；
@@ -590,6 +647,7 @@ async function doRefresh(apiUrl: string, apiToken?: string): Promise<RefreshMode
       keys: _keyCache?.keys ?? {},
       defaultModel: pull.defaultModel,
       strategy: _keyCache?.strategy ?? null,
+      localConfig: _keyCache?.localConfig ?? null,
       refreshIntervalS: _keyCache?.refreshIntervalS ?? pull.refreshIntervalS,
       fetchedAt: Date.now(),
       expiresAt: Date.now() + KEY_CACHE_TTL_MS,
@@ -615,10 +673,15 @@ async function doRefresh(apiUrl: string, apiToken?: string): Promise<RefreshMode
     console.warn(`[trirmc:keys] refresh failed (attribution: ${pull.attribution ?? 'network'}): ${pull.message}`);
     return 'failed';
   }
+  // N5 方案三：「落」步（同 initKeyCache 分支口径——版本变更才写；失败不推进=重试）
+  const lcReport = landLocalConfig(
+    pull.localConfig && pull.localConfig.version !== _keyCache?.localConfig?.version ? pull.localConfig : null,
+  );
   _keyCache = {
     keys: pull.keys,
     defaultModel: pull.defaultModel,
     strategy: pull.strategy,
+    localConfig: lcReport?.write_result === 'ok' ? pull.localConfig : (_keyCache?.localConfig ?? null),
     refreshIntervalS: pull.refreshIntervalS,
     fetchedAt: Date.now(),
     expiresAt: Date.now() + KEY_CACHE_TTL_MS,
@@ -626,7 +689,7 @@ async function doRefresh(apiUrl: string, apiToken?: string): Promise<RefreshMode
   _storage?.write(_keyCache);
   recordFetchSuccess();
   console.log(`[trirmc:keys] refreshed config:`, sanitizeKeysForLog(_keyCache));
-  void reportCardStatus('applied', undefined, 1);
+  void reportCardStatus('applied', undefined, 1, lcReport ?? undefined);
   // TK-011: Notify external consumers of updated key cache
   if (_onKeyCacheUpdated) {
     try {

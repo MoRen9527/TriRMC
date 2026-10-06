@@ -88,7 +88,10 @@ function loadV3Contract(contractPath: string, sourceRoot: string): V2SessionConf
   const family = parsed.contract.family;
   const paths = parsed.paths;
 
-  const soul = readFileSafe(resolve(sourceRoot, paths.soul));
+  // strictNullChecks 收窄守卫（存量类型债，2026-10-06 BOD 令类推放行）：v3 schema 中
+  // paths.soul 为 ZodOptional（合法可缺省）——缺省时按既有宽容语义视作空 soul 段
+  // （与 readFileSafe 文件缺失→'' 同族），避免 undefined 传入 resolve 误指 sourceRoot 目录。
+  const soul = paths.soul ? readFileSafe(resolve(sourceRoot, paths.soul)) : '';
   const agentBody = readFileSafe(resolve(sourceRoot, paths.agent_body));
   const agentFrontmatter = readFileSafe(resolve(sourceRoot, paths.agent_frontmatter));
 

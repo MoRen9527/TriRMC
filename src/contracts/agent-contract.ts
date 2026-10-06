@@ -72,7 +72,12 @@ export interface AgentContract {
   decision_rights: DecisionRights;
   collaborators: Collaborators;
   tools: ToolSpec[];
-  io_contract: IOContract;
+  /**
+   * IO 契约（v3 schema 为 ZodOptional/Nullable：board 等非员工席契约合法缺省）。
+   * strictNullChecks 型面如实化（2026-10-06 BOD 令类推放行）：消费方（capability-router
+   * matchIO `io?.outputs ?? []`）设计意图即容忍缺省，域型收紧为必填系历史漂移。
+   */
+  io_contract?: IOContract | null;
   /** Prose behavioral instructions not captured by structured fields */
   instructions?: string;
   /** Runtime environment baseline (e.g. TriMC) */

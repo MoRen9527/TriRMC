@@ -160,6 +160,23 @@ export function createTriMCApp(env: TriMCEnv) {
           }
         }
 
+        // ── S2 fail-closed（2026-10-07，判据 cto-s2-trirmc-token-gate-spec §二）：
+        // TRIRMC_INTERNAL_TOKEN 未配置时，cron 写族（POST/PATCH/DELETE——注册即
+        // 可执行任意 bash）整体 403。原 fail-open 默认态（env 未配置=门整体旁路）
+        // 构成未认证 RCE 潜势面；写族无兼容价值，不设过渡。读族（GET
+        // jobs/log/status）过渡无门——退役锚：l2 探针（R-HY 段）调用方 token 化
+        // 后收口归 /internal/* 统一门。两拒态分沟：配+错头=401（本门上方），
+        // 未配+写=403（此处）——勿合并。 ──
+        if (
+          !internalToken &&
+          (req.url ?? '').startsWith('/internal/v1/cron') &&
+          ['POST', 'PATCH', 'DELETE'].includes(req.method ?? '')
+        ) {
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'internal_token_required' }));
+          return;
+        }
+
         // ── GET /internal/v1/agents ──
         // M1 Phase-2: 会话注册表（claude agents --json 采集 + employeeId 映射）
         if (req.url === '/internal/v1/agents' && req.method === 'GET') {
@@ -835,6 +852,11 @@ export function createTriMCApp(env: TriMCEnv) {
         }
       } catch (err) {
         console.warn('[trirmc:keys] key cache init failed (continue boot):', (err as Error).message);
+      }
+
+      // S2（2026-10-07）：token 未配置=cron 写族 fail-closed 在候（启动期一次告警）
+      if (!process.env.TRIRMC_INTERNAL_TOKEN) {
+        console.warn('[trirmc:auth] internal token not configured: cron write endpoints reject');
       }
 
       // Cron scheduler：server listen 后装配（stale-run 恢复 + 调度循环）

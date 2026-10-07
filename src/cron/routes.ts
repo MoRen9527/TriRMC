@@ -4,6 +4,11 @@
  * Behavioral baseline: TriLC cron routes (POST jobs → 201, list {ok,jobs,count},
  * log {ok,logs,count}, status {ok,status}). Returns true when the request was
  * handled; false lets the app.ts if-chain continue (final 404).
+ *
+ * S2（2026-10-07）安全注：本 handler 不是安全边界——cron 写族（POST/PATCH/DELETE）
+ * 的 fail-closed 门在 app.ts /internal/* 鉴权段（token 未配置 → 403
+ * internal_token_required；token 已配置 → 401 全域校验）。经 createTriMCApp 装配
+ * 的流量均过门；直挂本 handler 的测试面（routes.test.ts）不涉门。
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -105,6 +110,8 @@ export function createCronRouteHandler(service: CronService): CronRouteHandler {
     }
 
     // ── GET /internal/v1/cron/jobs ──
+    // S2 过渡态：读族（GET jobs/log/status）暂无硬门——退役锚：l2 探针（R-HY 段）
+    // 调用方 token 化后收口归 /internal/* 统一门，防过渡态静默转永久（S2 2026-10-07）。
     if (url === '/internal/v1/cron/jobs' && method === 'GET') {
       const jobs = await service.listJobs();
       sendJson(res, 200, { ok: true, jobs, count: jobs.length });

@@ -14,15 +14,22 @@ import { readEnv, type TriMCEnv } from '../../src/config/env.js';
 
 const originalFetch = globalThis.fetch;
 
+// S2（2026-10-07）：cron 写族 fail-closed 后，装配面测试走 token 化正形
+// （配+对头；写读 /internal/* 全带 token 头，healthz 保持公开）。
+const TOKEN = 'test-token-0123456789abcdef';
+const auth = { 'x-internal-token': TOKEN };
+
 describe('TriMC app cron assembly', () => {
   let app: { start(): Promise<void>; stop(): Promise<void>; port: number };
   let tmpDir: string;
   let baseUrl: string;
+  const prevToken = process.env.TRIRMC_INTERNAL_TOKEN;
 
   before(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trimc-app-cron-'));
     overrideConfigDir(tmpDir);
     invalidateJobStoreCache();
+    process.env.TRIRMC_INTERNAL_TOKEN = TOKEN;
 
     const env: TriMCEnv = { ...readEnv(), port: 0 };
     app = createTriMCApp(env);
@@ -35,6 +42,8 @@ describe('TriMC app cron assembly', () => {
     await app.stop();
     resetConfigDir();
     invalidateJobStoreCache();
+    if (prevToken === undefined) delete process.env.TRIRMC_INTERNAL_TOKEN;
+    else process.env.TRIRMC_INTERNAL_TOKEN = prevToken;
   });
 
   it('healthz exposes the cron block', async () => {
@@ -50,7 +59,7 @@ describe('TriMC app cron assembly', () => {
   it('cron job lifecycle works through the assembled app', async () => {
     const created = await originalFetch(`${baseUrl}/internal/v1/cron/jobs`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({
         name: 'smoke-job',
         schedule: { kind: 'at', atMs: 4_000_000_000_000 },
@@ -60,16 +69,19 @@ describe('TriMC app cron assembly', () => {
     assert.equal(created.status, 201);
     const job = ((await created.json()) as { job: { id: string } }).job;
 
-    const list = await (await originalFetch(`${baseUrl}/internal/v1/cron/jobs`)).json();
+    const list = await (
+      await originalFetch(`${baseUrl}/internal/v1/cron/jobs`, { headers: auth })
+    ).json();
     assert.equal((list as { count: number }).count, 1);
 
     const status = await (
-      await originalFetch(`${baseUrl}/internal/v1/cron/status`)
+      await originalFetch(`${baseUrl}/internal/v1/cron/status`, { headers: auth })
     ).json();
     assert.equal((status as { status: { jobCount: number } }).status.jobCount, 1);
 
     const removed = await originalFetch(`${baseUrl}/internal/v1/cron/jobs/${job.id}`, {
       method: 'DELETE',
+      headers: auth,
     });
     assert.equal(removed.status, 200);
   });
@@ -78,7 +90,7 @@ describe('TriMC app cron assembly', () => {
     // Persist a job, restart the app, confirm the store survives.
     await originalFetch(`${baseUrl}/internal/v1/cron/jobs`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({
         name: 'persist-job',
         schedule: { kind: 'at', atMs: 4_000_000_000_000 },

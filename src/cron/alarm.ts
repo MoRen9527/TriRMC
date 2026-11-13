@@ -11,9 +11,10 @@
  *     c) arrival-missing 到岗超窗（FADE-001 阶段 2·F2）：迁移 job 跑毕后
  *        arrivalGraceMs（35min=30min 到岗窗+5min 探测余量）内 run 目录无
  *        arrival.json 值席到岗标记→告警（误报方向安全·双址兜底知情）。
- *        判定面=arrivalJobNames 匹配 job（默认 weekly_plane_shift）·
- *        runsRoot 下字典序最新 shift-* 目录（联审确认成立）·纯判定+IO 探
- *        分层（probe 失败不判=探失败族不告警方向如实注）。
+ *        判定面=arrivalJobNames 匹配 job（默认 weekly-plane-shift·河源
+ *        job store 真值连字符形）·runsRoot 下 mtime 最新 shift-* 目录
+ *        （mtime 序命名稳健——字典序会被模板变量字面量形劫持·部署窗实锚）
+ *        ·纯判定+IO 探分层（probe 失败不判=探失败族不告警方向如实注）。
  *   - N 值表（终定，TriMLC power-monitor 11-12 窗先例同构）：
  *     grace=30min / 败跑窗=30min / dedup 时间窗=30min / 稳定窗=连续 3 拍成功重臂 /
  *     复位不清窗锚（稳定窗重臂不清 lastAlarmAtMs——11-12 窗自查勘定修正的回归锚）。
@@ -35,7 +36,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 
 import type { CronJob } from '@tricompany/agent-core';
@@ -132,7 +133,7 @@ export function evaluateJob(
 
 /** run 目录面探读结果（IO 层喂入·unknown=探失败族不判）。 */
 export interface ArrivalFace {
-  /** runsRoot 下字典序最新 shift-* 目录名（null=无 run 目录） */
+  /** runsRoot 下 mtime 最新 shift-* 目录名（null=无 run 目录） */
   latestRunDirName: string | null;
   /** 该目录内 arrival.json 是否在位 */
   hasArrival: boolean;
@@ -158,18 +159,25 @@ export function evaluateArrivalMissing(
   return !face.hasArrival;
 }
 
-/** runsRoot 探读：字典序最新 shift-* 目录+arrival.json 存在性（异常=unknown）。 */
+/** runsRoot 探读：mtime 最新 shift-* 目录+arrival.json 存在性（异常=unknown）。
+ *  mtime 序而非字典序——run dir 命名形混入时字典序会被劫持（实锚：模板变量
+ *  字面量形 shift-W{fromWeek}-* 的 '{'(123)>'W'(87) 排序霸占末位·首拍后
+ *  shift-W47-* 也排其前=判定面永久失效）·mtime 反映真实执行序·命名稳健。 */
 export async function probeArrivalFace(runsRoot: string): Promise<ArrivalFace> {
   try {
     const entries = await readdir(runsRoot, { withFileTypes: true });
-    const runDirs = entries
-      .filter((e) => e.isDirectory() && e.name.startsWith('shift-'))
-      .map((e) => e.name)
-      .sort();
-    const latest = runDirs.at(-1) ?? null;
+    const runDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith('shift-'));
+    const stamped = await Promise.all(
+      runDirs.map(async (e) => ({
+        name: e.name,
+        mtimeMs: (await stat(path.join(runsRoot, e.name))).mtimeMs,
+      })),
+    );
+    stamped.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    const latest = stamped.at(-1);
     if (!latest) return { latestRunDirName: null, hasArrival: false };
-    const hasArrival = existsSync(path.join(runsRoot, latest, 'arrival.json'));
-    return { latestRunDirName: latest, hasArrival };
+    const hasArrival = existsSync(path.join(runsRoot, latest.name, 'arrival.json'));
+    return { latestRunDirName: latest.name, hasArrival };
   } catch {
     return { latestRunDirName: null, hasArrival: false, unknown: true };
   }

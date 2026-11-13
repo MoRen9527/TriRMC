@@ -6,7 +6,7 @@
  *     failed-run 窗口边界/成功翻态；missed 优先序。
  *   - arrival-missing（阶段 2·F2 到岗窗断言）：超窗判定/35min 边界/touch 豁免/
  *     五豁免族（在跑/没跑过/disabled/探失败/无 run 目录）/优先序兜底/
- *     probeArrivalFace IO 探（字典序最新 shift-* + arrival.json 存在性）/
+ *     probeArrivalFace IO 探（mtime 最新 shift-* + arrival.json 存在性·命名陷阱案）/
  *     tick 端到端（temp runsRoot 注入·runDirName 载荷/名单外零探针/missed 优先）。
  *   - 熔断电路双案：案 1（退避门——fire 后 armed=false 抑制·稳定窗 3 拍才重臂·
  *     重臂不清窗锚回归锚）；案 2（时间窗——dedup 窗内挡·窗过期放行）。
@@ -17,7 +17,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import * as net from 'node:net';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -254,19 +254,45 @@ describe('arrival-missing 判定（阶段 2·F2 到岗窗断言·face 注入形�
 });
 
 describe('probeArrivalFace IO 探读（temp runsRoot）', () => {
-  it('字典序最新 shift-* 目录 + arrival.json 存在性（非 shift 目录/文件不计）', async () => {
+  it('mtime 最新 shift-* 目录 + arrival.json 存在性（非 shift 目录/文件不计）', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'trirmc-alarm-probe-'));
-    mkdirSync(path.join(root, 'shift-WW45-20261106T235000Z'), { recursive: true });
-    mkdirSync(path.join(root, 'shift-WW46-20261113T065305Z'), { recursive: true });
+    const d1 = path.join(root, 'shift-WW45-20261106T235000Z');
+    const d2 = path.join(root, 'shift-WW46-20261113T065305Z');
+    mkdirSync(d1, { recursive: true });
+    mkdirSync(d2, { recursive: true });
     mkdirSync(path.join(root, 'other-dir'), { recursive: true });
     writeFileSync(path.join(root, 'shift-not-a-dir.txt'), 'x');
+    // 强设确定性 mtime（防同 ms 抖动）：d1 早 d2 晚
+    utimesSync(d1, new Date(1_000_000), new Date(1_000_000));
+    utimesSync(d2, new Date(2_000_000), new Date(2_000_000));
     const f1 = await probeArrivalFace(root);
     assert.equal(f1.unknown, undefined);
     assert.equal(f1.latestRunDirName, 'shift-WW46-20261113T065305Z');
     assert.equal(f1.hasArrival, false);
-    writeFileSync(path.join(root, 'shift-WW46-20261113T065305Z', 'arrival.json'), '{"ts":1}');
+    writeFileSync(path.join(d2, 'arrival.json'), '{"ts":1}');
     const f2 = await probeArrivalFace(root);
     assert.equal(f2.hasArrival, true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('命名陷阱案：模板变量字面量形不劫持判定面（mtime 序对字典序的勘偏回归锚）', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'trirmc-alarm-trap-'));
+    const dNormal = path.join(root, 'shift-W47-20261122T235000Z');
+    const dLiteral = path.join(root, 'shift-W{fromWeek}-20261113T064514Z'); // 河源实锚妆容形
+    mkdirSync(dNormal, { recursive: true });
+    mkdirSync(dLiteral, { recursive: true });
+    // 字面量目录 mtime 早·正常目录 mtime 晚（首拍后形态）——字典序里 '{'>'W' 会
+    // 把字面量排末位劫持 tail-1；mtime 序必须取正常目录
+    utimesSync(dLiteral, new Date(1_000_000), new Date(1_000_000));
+    utimesSync(dNormal, new Date(2_000_000), new Date(2_000_000));
+    const f = await probeArrivalFace(root);
+    assert.equal(f.latestRunDirName, 'shift-W47-20261122T235000Z');
+    assert.equal(f.hasArrival, false);
+    // 反向：字面量目录 mtime 最新（首拍前现势形态）→ 取字面量目录（真实最新）
+    utimesSync(dNormal, new Date(1_000_000), new Date(1_000_000));
+    utimesSync(dLiteral, new Date(3_000_000), new Date(3_000_000));
+    const f2 = await probeArrivalFace(root);
+    assert.equal(f2.latestRunDirName, 'shift-W{fromWeek}-20261113T064514Z');
     rmSync(root, { recursive: true, force: true });
   });
 

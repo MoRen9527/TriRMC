@@ -36,3 +36,28 @@ export {
   createCronRouteHandler,
   type CronRouteHandler,
 } from './routes.js';
+export {
+  ALARM_DEFAULTS,
+  createCronAlarm,
+  createHttpNotifier,
+  deliverWithRetry,
+  evaluateFailedRun,
+  evaluateJob,
+  evaluateMissedRun,
+  newCircuit,
+  stepCircuit,
+  buildEvent,
+  eventSubject,
+  eventText,
+  type AlarmCircuit,
+  type AlarmGateParams,
+  type AlarmJudgeParams,
+  type AlarmNotifier,
+  type CronAlarmEvent,
+  type CronAlarmHandle,
+  type CronAlarmKind,
+  type CronAlarmOptions,
+  type HttpNotifierOptions,
+} from './alarm.js';
+export { createSmtpNotifier, type SmtpNotifierConfig } from './alarm-smtp.js';
+export { createCronAlarmFromEnv, type CronAlarmEnvConfig } from './alarm-wiring.js';

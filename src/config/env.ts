@@ -25,6 +25,19 @@ export type TriMCEnv = {
    *  不设 → $TRIRMC_CONFIG_DIR/mc-store.sqlite；部署面 trirmc-mc.service 独立实例
    *  与现有 trirmc.service 各持一份 db（WAL 多进程安全，仍按实例分文件零共享）。 */
   mcDbPath: string;
+  /** FADE-001 告警闸主开关（TRIRMC_ALARM_ENABLED !== 'false' 时启用；
+   *  实际生效还需至少一条外发通道配置——alarm-wiring 零通道=disabled） */
+  alarmEnabled: boolean;
+  /** SMTP 主形凭据族（TRIRMC_ALARM_SMTP_HOST/PORT/USER/PASS/FROM/TO）——值面零回显（D-46） */
+  alarmSmtpHost?: string;
+  alarmSmtpPort?: number;
+  alarmSmtpUser?: string;
+  alarmSmtpPass?: string;
+  alarmSmtpFrom?: string;
+  alarmSmtpTo?: string;
+  /** HTTP 辅形（TRIRMC_ALARM_HTTP_URL + TRIRMC_ALARM_HTTP_TOKEN·Bearer） */
+  alarmHttpUrl?: string;
+  alarmHttpToken?: string;
 };
 
 export function readEnv(): TriMCEnv {
@@ -45,5 +58,16 @@ export function readEnv(): TriMCEnv {
     cronLogDir: settingOrEnv('TRIRMC_CRON_LOG_DIR') || undefined,
     defaultModel: settingOrEnv('TRIRMC_DEFAULT_MODEL') || undefined,
     mcDbPath: settingOrEnv('TRIRMC_MC_DB_PATH') ?? path.join(configDir, 'mc-store.sqlite'),
+    alarmEnabled: settingOrEnv('TRIRMC_ALARM_ENABLED') !== 'false',
+    alarmSmtpHost: settingOrEnv('TRIRMC_ALARM_SMTP_HOST') || undefined,
+    alarmSmtpPort: settingOrEnv('TRIRMC_ALARM_SMTP_PORT')
+      ? Number(settingOrEnv('TRIRMC_ALARM_SMTP_PORT'))
+      : undefined,
+    alarmSmtpUser: settingOrEnv('TRIRMC_ALARM_SMTP_USER') || undefined,
+    alarmSmtpPass: settingOrEnv('TRIRMC_ALARM_SMTP_PASS') || undefined,
+    alarmSmtpFrom: settingOrEnv('TRIRMC_ALARM_SMTP_FROM') || undefined,
+    alarmSmtpTo: settingOrEnv('TRIRMC_ALARM_SMTP_TO') || undefined,
+    alarmHttpUrl: settingOrEnv('TRIRMC_ALARM_HTTP_URL') || undefined,
+    alarmHttpToken: settingOrEnv('TRIRMC_ALARM_HTTP_TOKEN') || undefined,
   };
 }

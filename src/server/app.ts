@@ -1,9 +1,11 @@
 ﻿import { createServer, type Server } from 'node:http';
 import * as path from 'node:path';
+import { resolveStorePath } from '@tricompany/agent-core';
 import type { TriMCEnv } from '../config/env.js';
 import {
   createCronService,
   createCronRouteHandler,
+  createCronAlarmFromEnv,
   type CronService,
 } from '../cron/index.js';
 import { TaskController } from '../task-controller/controller.js';
@@ -73,14 +75,34 @@ export function createTriMCApp(env: TriMCEnv) {
 
   // ── Cron scheduler（cron 域，r1-2）──
   // 日志目录默认与 agent-core job-store 同根：$TRIRMC_CONFIG_DIR/cron/logs。
+  const cronLogDir =
+    env.cronLogDir ??
+    path.join(process.env.TRIRMC_CONFIG_DIR ?? path.resolve('data'), 'cron', 'logs');
   const cronService: CronService | null = env.cronEnabled
-    ? createCronService({
-        logDir:
-          env.cronLogDir ??
-          path.join(process.env.TRIRMC_CONFIG_DIR ?? path.resolve('data'), 'cron', 'logs'),
-      })
+    ? createCronService({ logDir: cronLogDir })
     : null;
   const handleCronRoutes = cronService ? createCronRouteHandler(cronService) : null;
+  // FADE-001 告警闸（job 级独立 timer·与 executor 平行）——随 cron 服务启停。
+  // 通道=SMTP 主形（TRIRMC_ALARM_SMTP_*）+HTTP 辅形（TRIRMC_ALARM_HTTP_URL·8712 NOTIFY 端点实位施工窗活体勘）；
+  // 零通道配置=disabled（本地开发零告警噪声）。
+  const cronAlarm = cronService
+    ? createCronAlarmFromEnv({
+        enabled: env.alarmEnabled,
+        smtp:
+          env.alarmSmtpHost && env.alarmSmtpFrom && env.alarmSmtpTo
+            ? {
+                host: env.alarmSmtpHost,
+                port: env.alarmSmtpPort ?? 465,
+                user: env.alarmSmtpUser,
+                pass: env.alarmSmtpPass,
+                from: env.alarmSmtpFrom,
+                to: env.alarmSmtpTo,
+              }
+            : undefined,
+        httpUrl: env.alarmHttpUrl,
+        httpToken: env.alarmHttpToken,
+      })
+    : null;
 
   /** 最近一次注册表快照（ListAgents 采集结果） */
   let registrySnapshot: AgentSession[] = [];
@@ -124,6 +146,10 @@ export function createTriMCApp(env: TriMCEnv) {
               service: 'trirmc',
               // LG-032 案 a：MC 服务面台账自检（sqlite 打开成功=ok）
               mcLedger: mcStore ? 'ok' : 'unavailable',
+              // FADE-001 F5（观测投影形 c2）: store/log 真值面直读——运维定位
+              // 从「猜 env 键」变「healthz 读真值」。纯增量零行为变化。
+              storePath: resolveStorePath(),
+              logPath: cronLogDir,
               cron: cronStatus
                 ? {
                     enabled: cronStatus.running,
@@ -840,6 +866,12 @@ export function createTriMCApp(env: TriMCEnv) {
       // Cron scheduler：server listen 后装配（stale-run 恢复 + 调度循环）
       await cronService?.start();
 
+      // FADE-001 告警闸：随 cron 服务启动（独立 60s tick·读 job-store 判定）
+      cronAlarm?.start();
+
+      // FADE-001 F5: store/log 真值面启动日志一行（与 healthz 投影同源）
+      console.log(`[trirmc:cron] store=${resolveStorePath()} logs=${cronLogDir}`);
+
       // 心跳超时扫描：10s 周期（与 heartbeatIntervalMs 对齐）
       heartbeatScanTimer = setInterval(() => {
         mirrorStore.scanStaleNodes();
@@ -851,6 +883,7 @@ export function createTriMCApp(env: TriMCEnv) {
     },
     async stop(): Promise<void> {
       stopKeyCache();
+      cronAlarm?.stop();
       cronService?.stop();
       if (heartbeatScanTimer) {
         clearInterval(heartbeatScanTimer);

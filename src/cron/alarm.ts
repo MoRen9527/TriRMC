@@ -52,8 +52,9 @@ export const ALARM_DEFAULTS = {
   failWindowMs: 30 * 60_000,
   /** 到岗超窗 grace（阶段 2·F2 终裁 35min=30min 到岗窗+5min 探测余量） */
   arrivalGraceMs: 35 * 60_000,
-  /** arrival-missing 判定面 job 名单（F2·默认仅周平面迁移 job） */
-  arrivalJobNames: ['weekly_plane_shift'],
+  /** arrival-missing 判定面 job 名单（F2·默认仅周平面迁移 job——河源现役
+   *  job store 真值=连字符形 weekly-plane-shift·2026-11-13 活体现勘纠偏） */
+  arrivalJobNames: ['weekly-plane-shift'],
   /** runs 目录根（arrival.json 探读位·daemon 宿主路径） */
   runsRoot: '/var/lib/trirmc/cron/runs',
   /** dedup 时间窗（N 值表终定 30min·窗内至多 1 条） */

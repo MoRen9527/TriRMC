@@ -56,7 +56,7 @@ function makeJob(overrides: {
 }): CronJob {
   return {
     id: overrides.id ?? 'job-1',
-    name: overrides.name ?? 'weekly_plane_shift',
+    name: overrides.name ?? 'weekly-plane-shift', // 河源现役 job name 真值（连字符形）
     enabled: overrides.enabled ?? true,
     schedule: { kind: 'cron', cron: '50 23 * * 0' },
     payload: {},
@@ -583,7 +583,7 @@ describe('HTTP 辅形 notifier', () => {
     const n = createHttpNotifier({ url: `http://127.0.0.1:${addr.port}/notify`, token: 'secret-token-x' });
     const ev: CronAlarmEvent = {
       jobId: 'j1',
-      jobName: 'weekly_plane_shift',
+      jobName: 'weekly-plane-shift',
       kind: 'missed-run',
       detectedAtMs: T0,
       detail: {
@@ -659,12 +659,12 @@ describe('N 值表终定值对表（验收锚③同值同源）', () => {
     assert.deepEqual([...ALARM_DEFAULTS.retryDelaysMs], [1_000, 5_000, 25_000]);
     assert.equal(ALARM_DEFAULTS.tickMs, 60_000);
     assert.equal(ALARM_DEFAULTS.arrivalGraceMs, 35 * MIN);
-    assert.deepEqual([...ALARM_DEFAULTS.arrivalJobNames], ['weekly_plane_shift']);
+    assert.deepEqual([...ALARM_DEFAULTS.arrivalJobNames], ['weekly-plane-shift']);
     assert.equal(ALARM_DEFAULTS.runsRoot, '/var/lib/trirmc/cron/runs');
   });
 
   it('事件投影零 payload/command 回显（D-46）', () => {
-    const job = makeJob({ name: 'weekly_plane_shift' });
+    const job = makeJob({ name: 'weekly-plane-shift' });
     (job.payload as Record<string, unknown>).command = 'echo SECRET-VALUE-FACE';
     const ev = { jobId: job.id, jobName: job.name, kind: 'missed-run' as const, detectedAtMs: 0, detail: { nextRunAtMs: null, lastRunAtMs: null, lastRunStatus: null, consecutiveErrors: 0, lastError: null, runCount: 0 } };
     const text = eventText(ev);

@@ -247,7 +247,17 @@ export function createTriMCApp(env: TriMCEnv) {
           const task = taskController.createTask(body.message, 'normal');
           taskController.updateTaskStatus(task.taskId, 'running');
 
-          const bridge = await sendMessage(session.sessionId, body.message, bridgeOptions);
+          // P1·LG-087 段B：per-message timeout 覆盖形（读件回签型投递方自带 timeoutMs·普通收令缺省维持 120s）
+          // 夹紧 30s-600s 防滥用；读件回签型建议 420_000（300-600 段中值·定值候补投耗时样本勘正）
+          const rawTimeout = (body as { timeoutMs?: unknown }).timeoutMs;
+          const perCallTimeout =
+            typeof rawTimeout === "number" && Number.isFinite(rawTimeout)
+              ? Math.min(Math.max(rawTimeout, 30_000), 600_000)
+              : bridgeOptions.messageTimeoutMs;
+          const bridge = await sendMessage(session.sessionId, body.message, {
+            ...bridgeOptions,
+            messageTimeoutMs: perCallTimeout,
+          });
           if (bridge.ok) {
             const done = taskController.completeTask(task.taskId, bridge.reply ?? '');
             res.writeHead(200, { 'content-type': 'application/json' });

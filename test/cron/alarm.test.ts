@@ -4,6 +4,10 @@
  * 覆盖（对表 TriMLC power-monitor 11-12 窗专测双案同款）：
  *   - 判定矩阵：missed-run grace 边界/在跑豁免/已跑豁免/one-shot 豁免/disabled；
  *     failed-run 窗口边界/成功翻态；missed 优先序。
+ *   - arrival-missing（阶段 2·F2 到岗窗断言）：超窗判定/35min 边界/touch 豁免/
+ *     五豁免族（在跑/没跑过/disabled/探失败/无 run 目录）/优先序兜底/
+ *     probeArrivalFace IO 探（字典序最新 shift-* + arrival.json 存在性）/
+ *     tick 端到端（temp runsRoot 注入·runDirName 载荷/名单外零探针/missed 优先）。
  *   - 熔断电路双案：案 1（退避门——fire 后 armed=false 抑制·稳定窗 3 拍才重臂·
  *     重臂不清窗锚回归锚）；案 2（时间窗——dedup 窗内挡·窗过期放行）。
  *   - tick 环：端到端 fire→notifier 收件·第二拍不重发·loadJobs 抛错不炸环。
@@ -13,19 +17,25 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as net from 'node:net';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import type { CronJob } from '@tricompany/agent-core';
 import {
   ALARM_DEFAULTS,
   createCronAlarm,
   createHttpNotifier,
   deliverWithRetry,
+  evaluateArrivalMissing,
   evaluateJob,
   newCircuit,
+  probeArrivalFace,
   stepCircuit,
   eventSubject,
   eventText,
   type AlarmNotifier,
+  type ArrivalFace,
   type CronAlarmEvent,
 } from '../../src/cron/alarm.js';
 
@@ -162,6 +172,116 @@ describe('evaluateJob 判定矩阵', () => {
       consecutiveErrors: 1,
     });
     assert.equal(evaluateJob(job, T0, JUDGE), 'missed-run');
+  });
+});
+
+describe('arrival-missing 判定（阶段 2·F2 到岗窗断言·face 注入形）', () => {
+  const T0 = 4_000_000_000_000;
+  const JUDGE_A = { graceMs: 30 * MIN, failWindowMs: 30 * MIN, arrivalGraceMs: 35 * MIN };
+  const face = (over: Partial<ArrivalFace> = {}): ArrivalFace => ({
+    latestRunDirName: 'shift-WW46-20261113T065305Z',
+    hasArrival: false,
+    ...over,
+  });
+
+  /** 迁移 job 形：40min 前跑完一拍（超 35min 到岗窗）+下拍在下周（不触 missed）。 */
+  function arrivalJob(overrides: Parameters<typeof makeJob>[0] = {}) {
+    return makeJob({
+      nextRunAtMs: T0 + 6 * 24 * 60 * MIN,
+      lastRunAtMs: T0 - 40 * MIN,
+      lastRunStatus: 'ok',
+      ...overrides,
+    });
+  }
+
+  it('超窗+无 arrival → arrival-missing', () => {
+    assert.equal(evaluateJob(arrivalJob(), T0, JUDGE_A, face()), 'arrival-missing');
+  });
+
+  it('到岗窗内（<35min）→ 不判', () => {
+    assert.equal(evaluateJob(arrivalJob({ lastRunAtMs: T0 - 34 * MIN }), T0, JUDGE_A, face()), null);
+  });
+
+  it('边界：now 恰为 lastRun+arrivalGrace → 不判（须严格大于）', () => {
+    assert.equal(evaluateJob(arrivalJob({ lastRunAtMs: T0 - 35 * MIN }), T0, JUDGE_A, face()), null);
+  });
+
+  it('已 touch arrival.json → 不判（不误报方向）', () => {
+    assert.equal(evaluateJob(arrivalJob(), T0, JUDGE_A, face({ hasArrival: true })), null);
+  });
+
+  it('豁免：正在跑 → 不判', () => {
+    assert.equal(evaluateJob(arrivalJob({ runningAtMs: T0 - 2 * MIN }), T0, JUDGE_A, face()), null);
+  });
+
+  it('豁免：没跑过（lastRunAtMs=null）→ 不判', () => {
+    assert.equal(evaluateJob(arrivalJob({ lastRunAtMs: null, lastRunStatus: null }), T0, JUDGE_A, face()), null);
+  });
+
+  it('豁免：disabled → 不判', () => {
+    assert.equal(evaluateJob(arrivalJob({ enabled: false }), T0, JUDGE_A, face()), null);
+  });
+
+  it('豁免：探失败（unknown）→ 不判', () => {
+    assert.equal(evaluateJob(arrivalJob(), T0, JUDGE_A, face({ unknown: true })), null);
+  });
+
+  it('豁免：无 run 目录（latestRunDirName=null）→ 不判', () => {
+    assert.equal(evaluateJob(arrivalJob(), T0, JUDGE_A, face({ latestRunDirName: null })), null);
+  });
+
+  it('优先序：missed 与 arrival 并存 → 只报 missed-run', () => {
+    const next = T0 - 31 * MIN;
+    const job = arrivalJob({ nextRunAtMs: next, lastRunAtMs: next - 7 * 24 * 60 * MIN });
+    assert.equal(evaluateJob(job, T0, JUDGE_A, face()), 'missed-run');
+  });
+
+  it('face 缺省（undefined）→ 第三分支不激活', () => {
+    assert.equal(evaluateJob(arrivalJob(), T0, JUDGE_A), null);
+  });
+
+  it('evaluateArrivalMissing 直判与 evaluateJob 同判（纯函数对表）', () => {
+    const job = arrivalJob();
+    assert.equal(
+      evaluateArrivalMissing(job, T0, { arrivalGraceMs: 35 * MIN }, face()),
+      true,
+    );
+    assert.equal(
+      evaluateArrivalMissing(job, T0, { arrivalGraceMs: 35 * MIN }, face({ hasArrival: true })),
+      false,
+    );
+  });
+});
+
+describe('probeArrivalFace IO 探读（temp runsRoot）', () => {
+  it('字典序最新 shift-* 目录 + arrival.json 存在性（非 shift 目录/文件不计）', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'trirmc-alarm-probe-'));
+    mkdirSync(path.join(root, 'shift-WW45-20261106T235000Z'), { recursive: true });
+    mkdirSync(path.join(root, 'shift-WW46-20261113T065305Z'), { recursive: true });
+    mkdirSync(path.join(root, 'other-dir'), { recursive: true });
+    writeFileSync(path.join(root, 'shift-not-a-dir.txt'), 'x');
+    const f1 = await probeArrivalFace(root);
+    assert.equal(f1.unknown, undefined);
+    assert.equal(f1.latestRunDirName, 'shift-WW46-20261113T065305Z');
+    assert.equal(f1.hasArrival, false);
+    writeFileSync(path.join(root, 'shift-WW46-20261113T065305Z', 'arrival.json'), '{"ts":1}');
+    const f2 = await probeArrivalFace(root);
+    assert.equal(f2.hasArrival, true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('runsRoot 不存在 → unknown（探失败族不判·豁免方向）', async () => {
+    const f = await probeArrivalFace(path.join(tmpdir(), `no-such-runs-${Date.now()}`));
+    assert.equal(f.unknown, true);
+    assert.equal(f.latestRunDirName, null);
+  });
+
+  it('空 root（无 shift-* 目录）→ latestRunDirName=null 非 unknown', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'trirmc-alarm-empty-'));
+    const f = await probeArrivalFace(root);
+    assert.equal(f.unknown, undefined);
+    assert.equal(f.latestRunDirName, null);
+    rmSync(root, { recursive: true, force: true });
   });
 });
 
@@ -325,6 +445,125 @@ describe('createCronAlarm tick 环（虚拟钟+捕获 notifier）', () => {
   });
 });
 
+describe('createCronAlarm arrival-missing tick 环（temp runsRoot 注入）', () => {
+  const T0 = 4_500_000_000_000;
+  const OPTS_A = {
+    graceMs: 30 * MIN,
+    failWindowMs: 30 * MIN,
+    dedupMs: 30 * MIN,
+    stableTicks: 3,
+    arrivalGraceMs: 35 * MIN,
+  };
+
+  function harnessWithRoot(jobs: CronJob[], runsRoot: string) {
+    let clock = T0;
+    const received: CronAlarmEvent[] = [];
+    const handle = createCronAlarm({
+      notifiers: [{ name: 'cap', async send(ev) { received.push(ev); } }],
+      loadJobs: async () => jobs,
+      now: () => clock,
+      retryDelaysMs: [1, 1, 1],
+      log: () => {},
+      runsRoot,
+      ...OPTS_A,
+    });
+    return {
+      handle,
+      received,
+      advance(ms: number) {
+        clock += ms;
+      },
+    };
+  }
+
+  function tempRunsRoot(withArrival: boolean): string {
+    const root = mkdtempSync(path.join(tmpdir(), 'trirmc-alarm-runs-'));
+    const runDir = path.join(root, 'shift-WW46-20261113T065305Z');
+    mkdirSync(runDir, { recursive: true });
+    if (withArrival) writeFileSync(path.join(runDir, 'arrival.json'), '{"ts":"x"}');
+    return root;
+  }
+
+  function cleanupRoot(root: string) {
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  function arrivalTickJob(overrides: Parameters<typeof makeJob>[0] = {}) {
+    return makeJob({
+      nextRunAtMs: T0 + 6 * 24 * 60 * MIN,
+      lastRunAtMs: T0 - 40 * MIN,
+      lastRunStatus: 'ok',
+      ...overrides,
+    });
+  }
+
+  it('端到端：超窗+无 arrival → fire arrival-missing + runDirName 载目录名 + 熔断不重发', async () => {
+    const root = tempRunsRoot(false);
+    const h = harnessWithRoot([arrivalTickJob()], root);
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 1);
+    assert.equal(h.received[0].kind, 'arrival-missing');
+    assert.equal(h.received[0].detail.runDirName, 'shift-WW46-20261113T065305Z');
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 1); // 同一失败态：熔断不重发
+    cleanupRoot(root);
+    h.handle.stop();
+  });
+
+  it('已 touch arrival → 零事件（不误报）', async () => {
+    const root = tempRunsRoot(true);
+    const h = harnessWithRoot([arrivalTickJob()], root);
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 0);
+    cleanupRoot(root);
+    h.handle.stop();
+  });
+
+  it('名单外 job（name 不匹配）→ 零探针零事件', async () => {
+    const root = tempRunsRoot(false);
+    const h = harnessWithRoot([arrivalTickJob({ name: 'other-job' })], root);
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 0);
+    cleanupRoot(root);
+    h.handle.stop();
+  });
+
+  it('runsRoot 不存在 → unknown 豁免零事件', async () => {
+    const h = harnessWithRoot([arrivalTickJob()], path.join(tmpdir(), `no-such-runs-${Date.now()}`));
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 0);
+    h.handle.stop();
+  });
+
+  it('missed 与 arrival 并存 → 只报 missed-run（arrival 被豁免·零 arrival 投影）', async () => {
+    const root = tempRunsRoot(false);
+    const next = T0 - 31 * MIN;
+    const job = arrivalTickJob({ nextRunAtMs: next, lastRunAtMs: next - 7 * 24 * 60 * MIN });
+    const h = harnessWithRoot([job], root);
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 1);
+    assert.equal(h.received[0].kind, 'missed-run');
+    assert.equal(h.received[0].detail.runDirName, undefined);
+    cleanupRoot(root);
+    h.handle.stop();
+  });
+
+  it('arrival 事件投影零 payload/command 回显（D-46 同族）', async () => {
+    const root = tempRunsRoot(false);
+    const job = arrivalTickJob();
+    (job.payload as Record<string, unknown>).command = 'echo SECRET-ARRIVAL-FACE';
+    const h = harnessWithRoot([job], root);
+    await h.handle.tickOnce();
+    assert.equal(h.received.length, 1);
+    const text = eventText(h.received[0]);
+    assert.ok(!text.includes('SECRET-ARRIVAL-FACE'));
+    assert.ok(!text.includes('command'));
+    assert.ok(text.includes('runDirName: shift-WW46-20261113T065305Z'));
+    cleanupRoot(root);
+    h.handle.stop();
+  });
+});
+
 describe('HTTP 辅形 notifier', () => {
   const T0 = 3_500_000_000_000;
 
@@ -419,6 +658,9 @@ describe('N 值表终定值对表（验收锚③同值同源）', () => {
     assert.equal(ALARM_DEFAULTS.stableTicks, 3);
     assert.deepEqual([...ALARM_DEFAULTS.retryDelaysMs], [1_000, 5_000, 25_000]);
     assert.equal(ALARM_DEFAULTS.tickMs, 60_000);
+    assert.equal(ALARM_DEFAULTS.arrivalGraceMs, 35 * MIN);
+    assert.deepEqual([...ALARM_DEFAULTS.arrivalJobNames], ['weekly_plane_shift']);
+    assert.equal(ALARM_DEFAULTS.runsRoot, '/var/lib/trirmc/cron/runs');
   });
 
   it('事件投影零 payload/command 回显（D-46）', () => {

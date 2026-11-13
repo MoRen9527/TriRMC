@@ -4,9 +4,16 @@
  * 设计边界（cto-phase1-tech-plan.md §三 终裁 + synthesis.md §二2）：
  *   - 挂点：TriRMC daemon 内 alarm 模块，独立 timer 读 job-store 判定，
  *     与 job-executor 平行，不侵入执行循环（零 executor 改动）。
- *   - 两条判据（CPO 防蠕变条款：不做分级/路由/聚合）：
+ *   - 判据（CPO 防蠕变条款：不做分级/路由/聚合——三条判据+F2 本体即 §二六件
+ *     采纳面）：
  *     a) missed-run 漏拍：now > nextRunAtMs + grace 且无新 run 记录且不在跑。
  *     b) failed-run 败跑：lastRunStatus = error 持续 failWindow 无成功。
+ *     c) arrival-missing 到岗超窗（FADE-001 阶段 2·F2）：迁移 job 跑毕后
+ *        arrivalGraceMs（35min=30min 到岗窗+5min 探测余量）内 run 目录无
+ *        arrival.json 值席到岗标记→告警（误报方向安全·双址兜底知情）。
+ *        判定面=arrivalJobNames 匹配 job（默认 weekly_plane_shift）·
+ *        runsRoot 下字典序最新 shift-* 目录（联审确认成立）·纯判定+IO 探
+ *        分层（probe 失败不判=探失败族不告警方向如实注）。
  *   - N 值表（终定，TriMLC power-monitor 11-12 窗先例同构）：
  *     grace=30min / 败跑窗=30min / dedup 时间窗=30min / 稳定窗=连续 3 拍成功重臂 /
  *     复位不清窗锚（稳定窗重臂不清 lastAlarmAtMs——11-12 窗自查勘定修正的回归锚）。
@@ -27,6 +34,10 @@
  *     重臂后新失败仍受 dedup 窗锚约束（复位不清窗锚）。
  */
 
+import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import * as path from 'node:path';
+
 import type { CronJob } from '@tricompany/agent-core';
 import { loadJobStore } from '@tricompany/agent-core';
 
@@ -39,6 +50,12 @@ export const ALARM_DEFAULTS = {
   graceMs: 30 * 60_000,
   /** 败跑窗（N 值表终定 30min） */
   failWindowMs: 30 * 60_000,
+  /** 到岗超窗 grace（阶段 2·F2 终裁 35min=30min 到岗窗+5min 探测余量） */
+  arrivalGraceMs: 35 * 60_000,
+  /** arrival-missing 判定面 job 名单（F2·默认仅周平面迁移 job） */
+  arrivalJobNames: ['weekly_plane_shift'],
+  /** runs 目录根（arrival.json 探读位·daemon 宿主路径） */
+  runsRoot: '/var/lib/trirmc/cron/runs',
   /** dedup 时间窗（N 值表终定 30min·窗内至多 1 条） */
   dedupMs: 30 * 60_000,
   /** 稳定窗：连续 3 拍健康才重臂（TriMLC 先例同值） */
@@ -49,11 +66,13 @@ export const ALARM_DEFAULTS = {
 
 // ── 判定纯函数 ──────────────────────────────────────────────────
 
-export type CronAlarmKind = 'missed-run' | 'failed-run';
+export type CronAlarmKind = 'missed-run' | 'failed-run' | 'arrival-missing';
 
 export interface AlarmJudgeParams {
   graceMs: number;
   failWindowMs: number;
+  /** 到岗超窗 grace（可选——evaluateJob face 路径缺省回 ALARM_DEFAULTS） */
+  arrivalGraceMs?: number;
 }
 
 /** 漏拍判据：排程时点已过 grace 且无新 run 记录且不在跑。 */
@@ -84,15 +103,75 @@ export function evaluateFailedRun(
   return nowMs > st.lastRunAtMs + params.failWindowMs;
 }
 
-/** 单 job 判定入口：missed-run 优先（单 tick 单 job 至多一条告警）。 */
+/** 单 job 判定入口：missed-run 优先（单 tick 单 job 至多一条告警）。
+ *  face 传入时激活第三分支 arrival-missing（IO 探层喂入·纯判定）。 */
 export function evaluateJob(
   job: CronJob,
   nowMs: number,
   params: AlarmJudgeParams,
+  face?: ArrivalFace,
 ): CronAlarmKind | null {
   if (evaluateMissedRun(job, nowMs, params)) return 'missed-run';
   if (evaluateFailedRun(job, nowMs, params)) return 'failed-run';
+  if (
+    face &&
+    evaluateArrivalMissing(
+      job,
+      nowMs,
+      { arrivalGraceMs: params.arrivalGraceMs ?? ALARM_DEFAULTS.arrivalGraceMs },
+      face,
+    )
+  ) {
+    return 'arrival-missing';
+  }
   return null;
+}
+
+// ── arrival-missing 判定（阶段 2·F2 到岗窗断言） ────────────────────
+
+/** run 目录面探读结果（IO 层喂入·unknown=探失败族不判）。 */
+export interface ArrivalFace {
+  /** runsRoot 下字典序最新 shift-* 目录名（null=无 run 目录） */
+  latestRunDirName: string | null;
+  /** 该目录内 arrival.json 是否在位 */
+  hasArrival: boolean;
+  /** 探失败（readdir/权限等异常）→ 判定直接豁免（不告警方向·如实注） */
+  unknown?: boolean;
+}
+
+/** 到岗超窗判据（纯函数）：迁移 job 跑毕后 arrivalGraceMs 内无 arrival.json。
+ *  没跑过/正在跑/窗内/探失败/无 run 目录——五豁免前置。 */
+export function evaluateArrivalMissing(
+  job: CronJob,
+  nowMs: number,
+  params: { arrivalGraceMs: number },
+  face: ArrivalFace,
+): boolean {
+  if (face.unknown) return false;
+  if (!job.enabled) return false;
+  const st = job.state;
+  if (st.lastRunAtMs === null) return false; // 没跑过不判
+  if (st.runningAtMs !== null) return false; // 正在跑（还没跑完谈不上到岗）
+  if (nowMs <= st.lastRunAtMs + params.arrivalGraceMs) return false; // 窗内
+  if (!face.latestRunDirName) return false; // run 目录缺席（探失败族）不判
+  return !face.hasArrival;
+}
+
+/** runsRoot 探读：字典序最新 shift-* 目录+arrival.json 存在性（异常=unknown）。 */
+export async function probeArrivalFace(runsRoot: string): Promise<ArrivalFace> {
+  try {
+    const entries = await readdir(runsRoot, { withFileTypes: true });
+    const runDirs = entries
+      .filter((e) => e.isDirectory() && e.name.startsWith('shift-'))
+      .map((e) => e.name)
+      .sort();
+    const latest = runDirs.at(-1) ?? null;
+    if (!latest) return { latestRunDirName: null, hasArrival: false };
+    const hasArrival = existsSync(path.join(runsRoot, latest, 'arrival.json'));
+    return { latestRunDirName: latest, hasArrival };
+  } catch {
+    return { latestRunDirName: null, hasArrival: false, unknown: true };
+  }
 }
 
 // ── dedup 熔断电路（TriMLC power-monitor 11-12 窗先例同构） ─────────
@@ -157,6 +236,8 @@ export interface CronAlarmEvent {
     consecutiveErrors: number;
     lastError: string | null;
     runCount: number;
+    /** arrival-missing 专用：最新 shift-* run 目录名（他类告警不投影·防蠕变最小面） */
+    runDirName?: string | null;
   };
 }
 
@@ -166,7 +247,12 @@ export interface AlarmNotifier {
   send(event: CronAlarmEvent): Promise<void>;
 }
 
-export function buildEvent(job: CronJob, kind: CronAlarmKind, detectedAtMs: number): CronAlarmEvent {
+export function buildEvent(
+  job: CronJob,
+  kind: CronAlarmKind,
+  detectedAtMs: number,
+  extra?: { runDirName?: string | null },
+): CronAlarmEvent {
   const st = job.state;
   return {
     jobId: job.id,
@@ -180,6 +266,7 @@ export function buildEvent(job: CronJob, kind: CronAlarmKind, detectedAtMs: numb
       consecutiveErrors: st.consecutiveErrors,
       lastError: st.lastError,
       runCount: st.runCount,
+      ...(extra?.runDirName !== undefined ? { runDirName: extra.runDirName } : {}),
     },
   };
 }
@@ -201,6 +288,7 @@ export function eventText(ev: CronAlarmEvent): string {
     `consecutiveErrors: ${d.consecutiveErrors}`,
     `lastError: ${d.lastError}`,
     `runCount: ${d.runCount}`,
+    ...(d.runDirName !== undefined ? [`runDirName: ${d.runDirName}`] : []),
   ].join('\n');
 }
 
@@ -275,6 +363,12 @@ export interface CronAlarmOptions {
   dedupMs?: number;
   stableTicks?: number;
   retryDelaysMs?: number[];
+  /** 到岗超窗 grace（阶段 2·F2·缺省=ALARM_DEFAULTS.arrivalGraceMs） */
+  arrivalGraceMs?: number;
+  /** runs 目录根（缺省=ALARM_DEFAULTS.runsRoot·daemon 宿主路径） */
+  runsRoot?: string;
+  /** arrival-missing 判定面 job 名单（缺省=ALARM_DEFAULTS.arrivalJobNames） */
+  arrivalJobNames?: readonly string[];
   log?: (msg: string) => void;
   /** 实例标签（多实例日志区分用） */
   label?: string;
@@ -296,7 +390,11 @@ export function createCronAlarm(options: CronAlarmOptions): CronAlarmHandle {
   const judge: AlarmJudgeParams = {
     graceMs: options.graceMs ?? ALARM_DEFAULTS.graceMs,
     failWindowMs: options.failWindowMs ?? ALARM_DEFAULTS.failWindowMs,
+    arrivalGraceMs: options.arrivalGraceMs ?? ALARM_DEFAULTS.arrivalGraceMs,
   };
+  const runsRoot = options.runsRoot ?? ALARM_DEFAULTS.runsRoot;
+  const arrivalJobNames: readonly string[] =
+    options.arrivalJobNames ?? ALARM_DEFAULTS.arrivalJobNames;
   const gate: AlarmGateParams = {
     dedupMs: options.dedupMs ?? ALARM_DEFAULTS.dedupMs,
     stableTicks: options.stableTicks ?? ALARM_DEFAULTS.stableTicks,
@@ -330,17 +428,43 @@ export function createCronAlarm(options: CronAlarmOptions): CronAlarmHandle {
       const missed = evaluateMissedRun(job, nowMs, judge);
       const failed = missed ? false : evaluateFailedRun(job, nowMs, judge);
       // missed-run 优先：败跑电路随健康步进（信息已随 missed event.detail 携带）
-      const kind: CronAlarmKind | null = missed ? 'missed-run' : failed ? 'failed-run' : null;
+      // arrival-missing（阶段 2·F2）兜底判定：missed/failed 均不成立才判
+      //（单 job 单 tick 至多一条·优先序 missed > failed > arrival）；
+      // 仅对 arrivalJobNames 匹配的迁移 job 探 runsRoot（IO 探分层·probe 失败=unknown 不判）
+      let arrival = false;
+      let arrivalDirName: string | null = null;
+      if (!missed && !failed && arrivalJobNames.includes(job.name)) {
+        const face = await probeArrivalFace(runsRoot);
+        arrival = evaluateArrivalMissing(
+          job,
+          nowMs,
+          { arrivalGraceMs: judge.arrivalGraceMs ?? ALARM_DEFAULTS.arrivalGraceMs },
+          face,
+        );
+        arrivalDirName = face.latestRunDirName;
+      }
 
       const missedCircuit = circuitFor(`${job.id}:missed-run`);
       const failedCircuit = circuitFor(`${job.id}:failed-run`);
+      const arrivalCircuit = circuitFor(`${job.id}:arrival-missing`);
+      // 三电路全步进：被豁免侧按健康步进（互斥豁免·okTicks 自然累积重臂）
+      const arrivalVerdict = stepCircuit(arrivalCircuit, arrival, nowMs, gate);
       const failedVerdict = stepCircuit(failedCircuit, failed, nowMs, gate);
       const missedVerdict = stepCircuit(missedCircuit, missed, nowMs, gate);
-      if (missedVerdict.fire || failedVerdict.fire) {
-        const firedKind: CronAlarmKind = missedVerdict.fire ? 'missed-run' : 'failed-run';
-        const ev = buildEvent(job, firedKind, nowMs);
+      if (missedVerdict.fire || failedVerdict.fire || arrivalVerdict.fire) {
+        const firedKind: CronAlarmKind = missedVerdict.fire
+          ? 'missed-run'
+          : failedVerdict.fire
+            ? 'failed-run'
+            : 'arrival-missing';
+        const ev = buildEvent(job, firedKind, nowMs, {
+          runDirName: firedKind === 'arrival-missing' ? arrivalDirName : undefined,
+        });
         log(
-          `${tag} ALARM ${firedKind} job "${job.name}" (${job.id}) runCount=${job.state.runCount}`,
+          `${tag} ALARM ${firedKind} job "${job.name}" (${job.id}) runCount=${job.state.runCount}` +
+            (firedKind === 'arrival-missing' && arrivalDirName
+              ? ` runDir=${arrivalDirName}`
+              : ''),
         );
         // 窗锚已置（fire 语义）；投递 best-effort——通道全败不回滚窗锚
         await Promise.all(

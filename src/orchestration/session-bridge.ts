@@ -142,8 +142,9 @@ function exists(p: string): boolean {
 
 function whichDsh(): string | null {
   try {
-    const { stdout } = execFileSync('which', ['dsh'], { encoding: 'utf-8' });
-    const hit = stdout.trim();
+    // STE 第三处修案：Sync 版直收 string（解构形对 string 非法=TS2339 二阶面）
+    const out: string = execFileSync('which', ['dsh'], { encoding: 'utf-8' });
+    const hit = out.trim();
     return hit || null;
   } catch {
     return null;

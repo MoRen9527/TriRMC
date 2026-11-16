@@ -86,6 +86,8 @@ export interface SpawnResult {
   ok: boolean;
   agentId?: string;
   name?: string;
+  /** dsh 形会话 id（boot 输出解析面·STE 修面案 b 增） */
+  sessionId?: string;
   error?: string;
 }
 
@@ -186,6 +188,7 @@ export async function spawnSession(
       timeout: o.spawnTimeoutMs,
       killSignal: 'SIGKILL',
       maxBuffer: 4 * 1024 * 1024,
+      encoding: 'utf-8',
       env: { ...process.env, HOME: o.runAsUser ? `/home/${o.runAsUser}` : process.env.HOME },
     });
     // 会话标识解析（容错两形：JSON 行双试+标识行正则——dsh boot 输出面）
@@ -272,6 +275,7 @@ export async function sendMessage(
       timeout: o.messageTimeoutMs,
       killSignal: 'SIGKILL',
       maxBuffer: 8 * 1024 * 1024,
+      encoding: 'utf-8',
       env: { ...process.env, HOME: o.runAsUser ? `/home/${o.runAsUser}` : process.env.HOME },
     });
     const reply = stdout.trim();

@@ -49,7 +49,9 @@ export function apply(ctx, config, io = {}) {
   const env = io.env;
 
   ctx.tools.register({
-    name: 'send_message',
+    name: 'bridge_send_message', // 工具名=桥前缀形（2026-11-18 SDE 活体窗二面实勘：
+    // 与 dsh 原生 subagent-control send_message 同名=遮蔽冲突面（agent 作用域
+    // 优先·root 挂载形不确定性遮蔽）——前缀名确定性消解）
     description:
       'Send a message to another duty-seat session (r-duty-<seat>) through the TriRMC message bridge. ' +
       'Delivers the text and returns the target session reply text. Do not use for file delivery; ' +

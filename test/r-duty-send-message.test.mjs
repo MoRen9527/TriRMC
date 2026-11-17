@@ -37,13 +37,13 @@ function loadTool({ fetch, selfSeat = 'fsd', env, config } = {}) {
   apply(ctx, config ?? {}, io);
   assert.equal(registered.length, 1, 'register 恰一件');
   const tool = registered[0];
-  assert.equal(tool.name, 'send_message');
+  assert.equal(tool.name, 'bridge_send_message');
   return { tool, calls: [] };
 }
 
 test('T4: tool 形断言——plain register 契约面（name/parameters/execute）', () => {
   const { tool } = loadTool({ fetch: async () => jsonRes(200, { ok: true, reply: '' }) });
-  assert.equal(tool.name, 'send_message');
+  assert.equal(tool.name, 'bridge_send_message');
   assert.ok(typeof tool.description === 'string' && tool.description.length > 10);
   assert.ok(tool.parameters.target_seat, 'target_seat 参数面在');
   assert.equal(tool.parameters.target_seat.required, true);

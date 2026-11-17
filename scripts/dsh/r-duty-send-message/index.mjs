@@ -7,6 +7,10 @@
 //     时必需——白盒+活体窗双验证兜契约面失配风险）
 //   · execute=fetch POST {bridgeBase}/internal/v1/agents/r-duty-<seat>/message
 //     （TriRMC app.ts 现役桥面·寻址三键 name 匹配键=工作区名形）
+//   · token 面（2026-11-18 SDE 活体窗前置实勘补装）：daemon TRIRMC_INTERNAL_TOKEN
+//     已设=门 active（app.ts L172-184 实勘）——POST 头带 x-internal-token（env 域
+//     照 bridgeBase 同序 io.env→process.env）；零值形=头省略（照既有开放形零变）。
+//     D-46：token 零回显零落错误面。
 //   · 自环守卫（target=self seat=拒 fail-visible·R_DUTY_SEAT env 注入形）
 //   · D-46 零信值：错误面/读数面零 message 正文回显
 //
@@ -75,12 +79,18 @@ export function apply(ctx, config, io = {}) {
         throw new Error('send_message: message 必载（非空串）');
       }
       const base = resolveBridgeBase(config, env);
+      const envDomain = env ?? process.env;
+      const internalToken = typeof envDomain.TRIRMC_INTERNAL_TOKEN === 'string'
+        ? envDomain.TRIRMC_INTERNAL_TOKEN.trim()
+        : '';
       const url = `${base}/internal/v1/agents/r-duty-${target}/message`;
       let res;
       try {
         res = await fetchImpl(url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: internalToken
+            ? { 'content-type': 'application/json', 'x-internal-token': internalToken }
+            : { 'content-type': 'application/json' },
           body: JSON.stringify({ message }),
         });
       } catch {

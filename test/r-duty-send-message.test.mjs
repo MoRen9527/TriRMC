@@ -129,3 +129,37 @@ test('T4: D-46 零信值断言——错误面族全扫零 message 正文回显',
     }
   }
 });
+
+// ── token 面补测（2026-11-18 SDE 活体窗前置实勘·daemon TRIRMC_INTERNAL_TOKEN 门
+// active 形下 POST 头须带 x-internal-token·app.ts L172-184 读头形）──
+test('T4: token 面——env 设值=POST 头带 x-internal-token（io.env 域）', async () => {
+  const { fetch, calls } = makeFetch(async () => jsonRes(200, { ok: true, reply: 'pong' }));
+  const { tool } = loadTool({ fetch, env: { TRIRMC_INTERNAL_TOKEN: 'tok-abc-123' } });
+  const reply = await tool.execute({ target_seat: 'cto', message: 'ping' });
+  assert.equal(reply, 'pong');
+  assert.equal(calls.length, 1);
+  const headers = calls[0].init.headers;
+  assert.equal(headers['x-internal-token'], 'tok-abc-123', 'token 头携带');
+  assert.equal(headers['content-type'], 'application/json');
+});
+
+test('T4: token 面——env 零值=头省略（既有开放形零变）+process.env 回退域', async () => {
+  const { fetch, calls } = makeFetch(async () => jsonRes(200, { ok: true, reply: 'pong' }));
+  const { tool } = loadTool({ fetch, env: {} });
+  await tool.execute({ target_seat: 'cto', message: 'ping' });
+  const headers = calls[0].init.headers;
+  assert.ok(!('x-internal-token' in headers), '零值形头省略');
+  assert.equal(headers['content-type'], 'application/json');
+  // process.env 回退域（io.env 未注入形）
+  const { fetch: fetch2, calls: calls2 } = makeFetch(async () => jsonRes(200, { ok: true, reply: 'pong' }));
+  const { tool: tool2 } = loadTool({ fetch: fetch2 });
+  const prev = process.env.TRIRMC_INTERNAL_TOKEN;
+  process.env.TRIRMC_INTERNAL_TOKEN = 'tok-proc-456';
+  try {
+    await tool2.execute({ target_seat: 'cto', message: 'ping' });
+    assert.equal(calls2[0].init.headers['x-internal-token'], 'tok-proc-456', 'process.env 回退域携带');
+  } finally {
+    if (prev === undefined) delete process.env.TRIRMC_INTERNAL_TOKEN;
+    else process.env.TRIRMC_INTERNAL_TOKEN = prev;
+  }
+});

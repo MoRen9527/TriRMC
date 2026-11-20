@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   runLoop, readFlag, setFlag, readRunnerState, writeRunnerState,
-  FUSE_MAX_ROUNDS, EXIT_GATE,
+  FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
   type ActivationVerdict, type FlagVolume, type RunnerState,
 } from '../../src/fade001/round_runner.js';
@@ -47,7 +47,7 @@ function makeRunner(script: Array<Partial<RunResult> & { verdict?: string }>): {
   };
 }
 
-function makeIo(root: string, runner: ChainRunner, probe?: () => ActivationVerdict): RoundRunnerIo {
+function makeIo(root: string, runner: ChainRunner, probe?: (checks: Record<string, unknown>) => ActivationVerdict): RoundRunnerIo {
   const io: RoundRunnerIo = { queueRoot: root, chainRunner: runner, nowIso: () => NOW };
   if (probe) io.activationProbe = probe;
   return io;
@@ -289,5 +289,148 @@ describe('G D6 gate 接线', () => {
     const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'g2' } });
     assert.strictEqual(out.exit?.kind, 'prod');
     assert.strictEqual(calls.length, 1);
+  });
+});
+
+// ── 节 3·first_round_pending 停点消费（勘面卷 §三.4 执行面·preflight 节 3 令面） ──
+// 施工正身注：消费面=D1 v3-final 零载·正形源=勘面卷 §三.4 CTO 定谳（语义面=D6 件输出面·
+//   执行面=runner 消费接线 loop 体域）+preflight 节 3——照定谳形施工·如实注。
+
+function gateReady(over: Partial<ActivationVerdict> = {}): ActivationVerdict {
+  return { ok: true, gate: 'ready', unmet: [], ...over };
+}
+
+describe('FR first_round_pending 停点消费', () => {
+  it('FR-1 首轮毕 stop→exit kind=first_round_pending（停面候 CEO·round_count 零推进）', async () => {
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'stop' } });
+    const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr1' } });
+    assert.strictEqual(out.exit?.kind, 'first_round_pending');
+    assert.match(out.exit?.detail ?? '', /停面候 CEO/);            // 停面态声明入链
+    assert.strictEqual(out.rounds_run, 0);                        // 停点轮未完成迭代（照铸形）
+    assert.strictEqual(readRunnerState(makeIo(root, runner)).round_count, 0);  // 停面零推进
+    assert.strictEqual(calls.length, 1);                          // 首轮毕即停·零二次迭代
+  });
+  it('FR-2 released+ref 在→放行续轮（放行一次非逐轮·第二轮零复查）', async () => {
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'released', authority_ref: 'CEO令:fr2' } });
+    const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr2' } });
+    assert.strictEqual(out.exit?.kind, 'prod');                   // 放行→第二轮正常走完
+    assert.strictEqual(calls.length, 2);
+  });
+  it('FR-3 state=released 但 ref 缺→拒绝 fail-closed（停面零放行·令面非时面）', async () => {
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'released' } });
+    const { runner, calls } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr3' } });
+    assert.strictEqual(out.exit?.kind, 'first_round_pending');
+    assert.match(out.exit?.detail ?? '', /authority_ref=缺/);
+    assert.strictEqual(out.rounds_run, 0);
+    assert.strictEqual(calls.length, 1);
+  });
+  it('FR-4 ref 空白串=同缺（trim 面 fail-closed）', async () => {
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'released', authority_ref: '   ' } });
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr4' } });
+    assert.strictEqual(out.exit?.kind, 'first_round_pending');
+    assert.strictEqual(out.rounds_run, 0);
+  });
+  it('FR-5 state 非法值→fail-closed 停面（零放行）', async () => {
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'unknown' as 'stop' } });
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr5' } });
+    assert.strictEqual(out.exit?.kind, 'first_round_pending');
+    assert.match(out.exit?.detail ?? '', /state=unknown/);
+    assert.strictEqual(out.rounds_run, 0);
+  });
+  it('FR-6 first_round_pending 缺省/null→零停点直进', async () => {
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: null });
+    const { runner, calls } = makeRunner([{ verdict: 'loop_exit' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr6' } });
+    assert.strictEqual(out.exit?.kind, 'prod');
+    assert.strictEqual(calls.length, 1);
+  });
+  it('FR-7 呈报载荷出链=白名单投影（plain_line 入 detail·brief 其他键零 dump——D-46）', async () => {
+    const probe = (): ActivationVerdict => gateReady({
+      first_round_pending: { state: 'stop', brief: { plain_line: '大白话：首轮毕停点候放行', other_key: { nested: 'payload' } } },
+    });
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr7' } });
+    assert.match(out.exit?.detail ?? '', /大白话：首轮毕停点候放行/);
+    assert.ok(!(out.exit?.detail ?? '').includes('other_key'));    // 零原始 brief dump
+    assert.ok(!(out.exit?.detail ?? '').includes('nested'));
+  });
+});
+
+describe('GW gate 喂入接线（A1-A4 采集位=调用面·runner 只透传零判读）', () => {
+  it('GW-1 ignite.checks 透传 probe', async () => {
+    let seen: Record<string, unknown> | null = null;
+    const probe = (checks: Record<string, unknown>): ActivationVerdict => { seen = checks; return gateReady(); };
+    const { runner } = makeRunner([{ verdict: 'loop_exit' }]);
+    await runLoop(makeIo(root, runner, probe), { params: { run_id: 'gw1' }, checks: { A1: '白盒零新增红', A4: true } });
+    assert.deepStrictEqual(seen, { A1: '白盒零新增红', A4: true });
+  });
+  it('GW-2 checks 缺省→probe 收空对象（零喂入缺省形）', async () => {
+    let seen: Record<string, unknown> | null = null;
+    const probe = (checks: Record<string, unknown>): ActivationVerdict => { seen = checks; return gateReady(); };
+    const { runner } = makeRunner([{ verdict: 'loop_exit' }]);
+    await runLoop(makeIo(root, runner, probe), { params: { run_id: 'gw2' } });
+    assert.deepStrictEqual(seen, {});
+  });
+  it('GW-3 probe 全程只调一次（起跑前置位·非逐轮）', async () => {
+    let n = 0;
+    const probe = (): ActivationVerdict => { n += 1; return gateReady(); };
+    const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
+    await runLoop(makeIo(root, runner, probe), { params: { run_id: 'gw3' } });
+    assert.strictEqual(n, 1);                                     // 两轮迭代·probe 仍一次
+    assert.strictEqual(calls.length, 2);
+  });
+});
+
+describe('RR resume 轮间指令面', () => {
+  it('RR-1 RESUME_STAGE_RETRY 值面=7（D5 拟稿 schema 承·--resume-stage 7 形锚）', () => {
+    assert.strictEqual(RESUME_STAGE_RETRY, 7);
+  });
+});
+
+describe('GD 护栏随铸（D-46/D-47 白盒）', () => {
+  it('GD-1 exit detail 全四支零时刻嵌值（D-47 件内零推算·构造面零时戳拼接）', async () => {
+    // prod 支（先行·后支各自重置 flag——同 root 四支串行防状态污染）
+    const p1 = makeRunner([{ verdict: 'loop_exit', run_dir: 'gd-p' }]);
+    const o1 = await runLoop(makeIo(root, p1.runner), { params: { run_id: 'gd1' } });
+    assert.ok(!(o1.exit?.detail ?? '').includes(NOW));
+    // fuse 支
+    seedFlag({ flag: 'test' });
+    seedState({ round_count: 8 });
+    const p2 = makeRunner([{ verdict: 'continue' }]);
+    const o2 = await runLoop(makeIo(root, p2.runner), { params: { run_id: 'gd1' } });
+    assert.strictEqual(o2.exit?.kind, 'fuse');
+    assert.ok(!(o2.exit?.detail ?? '').includes(NOW));
+    // failed 支
+    seedFlag({ flag: 'test' });
+    seedState({ round_count: 0 });
+    const p3 = makeRunner([{ ok: false, err: 'gd 段错' }]);
+    const o3 = await runLoop(makeIo(root, p3.runner), { params: { run_id: 'gd1' } });
+    assert.strictEqual(o3.exit?.kind, 'failed');
+    assert.ok(!(o3.exit?.detail ?? '').includes(NOW));
+    // first_round_pending 支
+    seedFlag({ flag: 'test' });
+    seedState({ round_count: 0 });
+    const p4 = makeRunner([{ verdict: 'continue' }]);
+    const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'stop' } });
+    const o4 = await runLoop(makeIo(root, p4.runner, probe), { params: { run_id: 'gd1' } });
+    assert.strictEqual(o4.exit?.kind, 'first_round_pending');
+    assert.ok(!(o4.exit?.detail ?? '').includes(NOW));
+  });
+  it('GD-2 停面零密值落卷（final_state 白名单域·卷面零 brief 承载——D-46）', async () => {
+    const probe = (): ActivationVerdict => gateReady({
+      first_round_pending: { state: 'stop', brief: { plain_line: 'x', raw_payload: { k: 'v' } } },
+    });
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'gd2' } });
+    // 停面零写卷（final_state 只在 outcome 返回面·零文件=零密值落盘正形——照铸形）
+    assert.strictEqual(existsSync(path.join(root, 'state', 'runner-state.json')), false);
+    const keys = Object.keys(out.final_state);
+    assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker'].includes(k)));  // 白名单域外零承载
+    assert.strictEqual('brief' in out.final_state, false);        // 呈报载荷走 exit detail 投影面零入 state
   });
 });

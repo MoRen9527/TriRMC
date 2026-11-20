@@ -158,7 +158,7 @@ export interface LoopOutcome {
  * 状态机四支（225 款二）：debug=体内候裁决／test=直进／EXIT≥95=break+flag→prod／8 轮 FUSE=break 熔断。
  * prod 不入本循环（点火面拦截→单轮直走形·调用面守）。
  */
-export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams }): Promise<LoopOutcome> {
+export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; checks?: Record<string, unknown> }): Promise<LoopOutcome> {
   const flagVol = readFlag(io);
   if (flagVol.flag === 'prod') {
     throw new Error('prod 不入 loop（点火面拦截→单轮直走形·D1 §一 prod 分支）');
@@ -168,8 +168,10 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams }
   let params = ignite.params;
 
   // 起跑前置检查位（D6 gate 接线·gate=ready 方可入轮——D7 验证段四锚承录）
+  // A1-A4 状态采集喂入：采集位=调用面（值席起跑前采集）·runner 只透传零判读（勘面卷 §三.4 承）
+  let gateVerdict: ActivationVerdict | null = null;
   if (io.activationProbe) {
-    const v = io.activationProbe({});
+    const v = io.activationProbe(ignite.checks ?? {});
     if (!v.ok || v.gate !== 'ready') {
       return {
         exit: { kind: 'failed', detail: `activation gate blocked（unmet=${(v.unmet ?? []).join(',')}）——起跑门闭 fail-closed` },
@@ -177,6 +179,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams }
         final_state: st,
       };
     }
+    gateVerdict = v;
   }
 
   // 首轮知情停点消费面（resume_stage 续跑边·pending-retry 轮下轮=--resume-stage 7 形）
@@ -196,6 +199,25 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams }
       st.fuse_marker = true;
       writeRunnerState(io, st);                                  // 熔断停候 CEO（fuse.marker+pending 冻结）
       return { exit: { kind: 'fuse', detail: `FUSE 熔断（round_count=${st.round_count}>=${FUSE_MAX_ROUNDS}）候 CEO` }, rounds_run: rounds, final_state: st };
+    }
+    // 首轮毕知情停点消费（勘面卷 §三.4 执行面：停面+呈报+候令 loop 体域随铸·preflight 节 3）
+    // 放行令=令面非时面：authority_ref 在=released·无 ref=拒绝 fail-closed——放行一次非逐轮（gateVerdict 仅首轮毕查）
+    if (rounds === 0 && gateVerdict?.first_round_pending) {
+      const frp = gateVerdict.first_round_pending;
+      const released = frp.state === 'released' && !!(frp.authority_ref && String(frp.authority_ref).trim());
+      if (!released) {
+        // 呈报载荷出链=白名单投影（D-46）：大白话一行+停面态声明·零原始 brief dump
+        const plainLine = frp.brief && typeof frp.brief['plain_line'] === 'string' ? String(frp.brief['plain_line']) : '';
+        return {
+          exit: {
+            kind: 'first_round_pending',
+            detail: `首轮毕知情停点（state=${frp.state}·authority_ref=${frp.authority_ref ? '在' : '缺'}）——停面候 CEO 知情放行${plainLine ? `｜${plainLine}` : ''}`,
+          },
+          rounds_run: rounds,
+          final_state: st,
+        };
+      }
+      // released → 放行落下迭代（放行一次非逐轮·后续轮零复查 gateVerdict）
     }
     if (flagVol.flag === 'debug') {                              // 体内候裁决事件（notice-202 门=事件源单值）
       const ruling = await awaitCeoRuling(io);                   // continue/terminate/absent 三态

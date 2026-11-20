@@ -81,7 +81,10 @@ export const STAGES: StageDef[] = [
   },
   {
     name: 'plan_scope', script: 'plan_scope.py', output: 'plan.json',
-    argv: (p) => ['--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId],
+    // --operating-root 必传绝对形（CLI 缺省=相对 cwd 解析·第八发实锚 2026-11-21）+
+    // --start-date（周目录年段推算第一候选分支入参·零传=fallthrough 面）
+    argv: (p) => ['--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
+      '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'), '--start-date', p.startDate],
   },
   {
     name: 'dce', script: 'dce_steps.py', output: 'dce.json',
@@ -90,8 +93,10 @@ export const STAGES: StageDef[] = [
   },
   {
     name: 'verify', script: 'verify.py', output: 'verify.json',
+    // --operating-root/--start-date 同族必传（verify.py L272/L275 相对缺省同坑·第八发乘机扫毕预判 2026-11-21）
     argv: (p) => ['--plan-file', path.join(p.runDir, 'plan.json'), '--from-week', p.fromWeek,
-      '--to-week', p.toWeek, '--run-dir', p.runDir],
+      '--to-week', p.toWeek, '--run-dir', p.runDir,
+      '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'), '--start-date', p.startDate],
   },
   {
     name: 'score', script: 'score_cli.py', output: 'score.json',
@@ -193,11 +198,14 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
       if (r.status !== 0) {
         // dce rc=3=halt_pending_ruling 候裁态（dce_steps.py 承录形）——投影关键词入 err·裁决面可判读
         const kind = st.name === 'dce' && r.status === 3 ? 'halt_pending_ruling（候 COS 裁决）' : '';
+        // stdout 尾投影（CTO 裁点 a 形 19921b1e8·第六发 preflight 检查红读数丢面修笔捆排
+        // 2026-11-21——stdout 有内容才投影·空则零段零噪音；tail() 同 ERR_TAIL=200 白名单形）
+        const outSeg = (r.stdout ?? '').trim() ? `｜stdout 尾：${tail(r.stdout ?? '')}` : '';
         return {
           ok: false,
           run_dir: runDir,
           aggregate: {},
-          err: `段 ${i + 1}(${st.name}) rc=${r.status}${kind ? `·${kind}` : ''}｜stderr 尾：${tail(r.stderr ?? '')}`,
+          err: `段 ${i + 1}(${st.name}) rc=${r.status}${kind ? `·${kind}` : ''}｜stderr 尾：${tail(r.stderr ?? '')}${outSeg}`,
         };
       }
       if (st.redirect) {

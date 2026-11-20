@@ -113,18 +113,46 @@ test('CS-3 redirect 族落卷=stdout 原文（preflight/qualify 双段）', asyn
   } finally { cleanup(root); }
 });
 
-test('CS-4 rc=2 fail 投影：err 含段名+rc+stderr 尾·零续段', async () => {
+test('CS-4 rc=2 fail 投影：err 含段名+rc+stderr 尾+stdout 尾·零续段', async () => {
   const { root, runDir } = makeEnv();
   try {
     const b = greenBehavior(runDir);
-    b.qualify = { rc: 2, stderr: 'boom: no repo' };
+    b.qualify = { rc: 2, stderr: 'boom: no repo', stdout: '{"verdict":"fail","reasons":["red-check"]}' };
     const r = runnerFor(stubAll(b));
     const out = await r.run(params(runDir), null);
     assert.equal(out.ok, false);
     assert.match(String(out.err), /段 2\(qualify\) rc=2/);
     assert.match(String(out.err), /boom: no repo/);
+    assert.match(String(out.err), /stdout 尾/);                    // stdout 投影修笔（CTO 裁 a 形·读数丢面堵）
+    assert.match(String(out.err), /red-check/);
     assert.deepEqual(r.stagesRun, ['preflight', 'qualify']);
   } finally { cleanup(root); }
+});
+
+test('CS-4b stdout 空=投影零段零噪音（rc≠0 面 stderr 单独承载）', async () => {
+  const { root, runDir } = makeEnv();
+  try {
+    const b = greenBehavior(runDir);
+    b.qualify = { rc: 2, stderr: 'boom only' };                     // stdout 空
+    const r = runnerFor(stubAll(b));
+    const out = await r.run(params(runDir), null);
+    assert.equal(out.ok, false);
+    assert.doesNotMatch(String(out.err), /stdout 尾/);
+  } finally { cleanup(root); }
+});
+
+test('CS-14 operating-root/start-date 双段 argv 必传断言（段 3 plan_scope+段 5 verify·绝对形 tmv-root 拼装）', () => {
+  const p = { runDir: 'R', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never;
+  const expectRoot = path.join('T', 'docs/workflow/operating-records');
+  for (const idx of [2, 4]) {                                       // STAGES[2]=plan_scope·STAGES[4]=verify
+    const argv = STAGES[idx].argv(p, 'R');
+    const oi = argv.indexOf('--operating-root');
+    const si = argv.indexOf('--start-date');
+    assert.ok(oi !== -1, `段 ${idx + 1}(--operating-root 缺)`);
+    assert.equal(argv[oi + 1], expectRoot, `段 ${idx + 1}(operating-root 非绝对拼装形)`);
+    assert.ok(si !== -1, `段 ${idx + 1}(--start-date 缺)`);
+    assert.equal(argv[si + 1], '2026-01-05');
+  }
 });
 
 test('CS-5 dce rc=3=halt_pending_ruling 候裁态投影（关键词入 err·裁决面可判读）', async () => {

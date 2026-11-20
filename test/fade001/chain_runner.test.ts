@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 
-import { STAGES, makeChainRunner } from '../../src/fade001/chain_runner.js';
+import { STAGES, makeChainRunner, SPAWN_STAGE_TIMEOUT_MS } from '../../src/fade001/chain_runner.js';
 
 const PY = process.platform === 'win32' ? 'python' : 'python3';
 
@@ -243,4 +243,12 @@ test('CS-12 段序表值面：十段名+产物名+spawn 段=score_skill（spawn 
     ['preflight.json', 'qualify.json', 'plan.json', 'dce.json', 'verify.json', 'score.json', 'score-skill.json', 'close.json', 'manifest.json', 'notify_done.json']);
   const spawnSeg = STAGES.find((s) => s.name === 'score_skill');
   assert.equal(spawnSeg?.script, 'score_skill_spawn.py');
+});
+
+test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=6_600_000（7×900s+余量）·段 7 覆写形在位·余段缺省', () => {
+  assert.equal(SPAWN_STAGE_TIMEOUT_MS, 6_600_000);   // 7 席×900s+开销余量（COO 释放令条款③勘定值面）
+  const spawnSeg = STAGES.find((s) => s.name === 'score_skill');
+  assert.equal(spawnSeg?.timeoutMs, SPAWN_STAGE_TIMEOUT_MS);
+  const overridden = STAGES.filter((s) => s.timeoutMs !== undefined);
+  assert.deepEqual(overridden.map((s) => s.name), ['score_skill']);   // 唯一覆写段
 });

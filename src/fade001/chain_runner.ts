@@ -57,8 +57,17 @@ interface StageDef {
   output: string;          // 产物卷名（run_dir 内·前置断言域）
   /** stdout JSON 重定向族（preflight/qualify=CLI 打 stdout·本件落卷） */
   redirect?: boolean;
+  /** 段级超时覆写（段 7 spawn 窗对表随行项·COO 节 4 释放令条款③勘定面） */
+  timeoutMs?: number;
   argv: (p: ChainParams, runDir: string) => string[];
 }
+
+/**
+ * spawn 段总窗对表（COO 释放令条款③随行项落实形）：score_skill_spawn 每席 subprocess
+ * timeout 缺省 900s·7 席串行→段总窗上限=7×900s+开销余量≈6_600_000ms（110min）——
+ * 默认段超时 900s 会截杀 spawn 段（真发前必修面·2026-11-21 勘定）。
+ */
+export const SPAWN_STAGE_TIMEOUT_MS = 6_600_000;
 
 /** 十段链段序表（硬串行·禁跳段——D1 §四；argv=各段 argparse 必载面白名单·2026-11-21 现役勘定） */
 export const STAGES: StageDef[] = [
@@ -90,6 +99,7 @@ export const STAGES: StageDef[] = [
   },
   {
     name: 'score_skill', script: 'score_skill_spawn.py', output: 'score-skill.json',
+    timeoutMs: SPAWN_STAGE_TIMEOUT_MS,                           // spawn 窗对表（7×900s+余量·随行项条款③）
     argv: (p) => ['--run-dir', p.runDir, '--run-id', p.runId],   // spawn 七席段（现役正形·dsh headless CLI）
   },
   {
@@ -175,7 +185,7 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
       if (!existsSync(script)) {
         return { ok: false, run_dir: runDir, aggregate: {}, err: `段 ${i + 1}(${st.name}) CLI 缺：${st.script}（TC 检出面·fail-closed）` };
       }
-      const r = spawnSync(py, [script, ...st.argv(p, runDir)], { encoding: 'utf8', timeout: timeoutMs });
+      const r = spawnSync(py, [script, ...st.argv(p, runDir)], { encoding: 'utf8', timeout: st.timeoutMs ?? timeoutMs });
       stagesRun.push(st.name);
       if (r.error) {
         return { ok: false, run_dir: runDir, aggregate: {}, err: `段 ${i + 1}(${st.name}) 进程错：${r.error.message.slice(0, ERR_TAIL)}` };

@@ -1,0 +1,229 @@
+// ── FADE-001 D7 起跑接线·round_runner（loop 引擎宿主） ──
+// D1 卷 cto-round-programming-design-20261119 §一 loop 本体照铸（v2 主形·WO-D7-TONIGHT §四起跑接线令面）。
+// 主形定谳：loop 本体=runner 内单程序内聚循环控制流（while＋状态机）——点火后循环体内自主迭代推进；
+// 前版「每轮一指令·队列接力」形=单轮开工指示器非 loop（勘正承录）。
+//
+// 三层判据族分野（cto-d6d7 勘面卷 §一）：挡位边（activation_gate 一次性）≠轮转边（EXIT≥95 每轮判）
+// ≠质量边（retry<90 close 毕判）——本件承载轮转边+FUSE·零消费对方产物零分支交叠。
+// 四分支族（§七.3）：挡位边/轮转边/质量边/续跑边（resume pending）——各读各卷。
+//
+// 四护栏常位（CEO 意见⑥·改造后原样保留）：
+//   ①8 轮 FUSE（本件 round_count>=8 熔断·D1 §一 L21 照铸·值面=8 与 D1 定谳同值）
+//   ②GLM 速率护栏=GLM 轨单跑纪律面（同窗并发 1·D1 L91 固化——值席/编排面守·本件零并发点火）
+//   ③token 值面禁进转报=D-46（本件报文/载荷构造面全白名单投影·零原始卷 dump）
+//   ④D-47 时刻制（本件报文落款=date 现查原值粘贴形·调用面传时刻串非件内推算）
+//
+// D6 gate 接线（起跑前置检查位·勘面卷 §七.2）：check_activation 判读输出挂点火前置——
+// gate=ready 方可入 while 体（子进程 CLI 调 TC 检出 activation_gate.py --checks-json·施工选定形
+// 候 CTO 终审注——fsd-d7-launch-wiring-preflight-20261120 §一）。
+// first_round_pending=stop 语义（§三）：首轮毕（close 段毕+verdict 面）→停点挂起候 CEO 知情放行
+// ——放行令=令面非时面（authority_ref 在=released·无 ref=拒绝 fail-closed）——放行一次非逐轮放行。
+//
+// resume 轮间指令面（D1 §六A·勘面卷 §七.3 续跑边）：retry_flag.json pending-retry 轮→
+// 下轮点火指令携带 resumeStage=7（D5 拟稿 schema 承·--resume-stage 7 形）。
+
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+export const FUSE_MAX_ROUNDS = 8;          // ①8 轮 FUSE 值面（D1 §一 L21 定谳值·边界案=F-2 7→8 钉）
+export const EXIT_GATE = 95;               // 轮转边 EXIT≥95→prod（≥95 含边界·唯一程序自动边）
+export const RESUME_STAGE_RETRY = 7;       // resume 段号=score 段（D5 拟稿 schema 承）
+
+export type FlagState = 'debug' | 'test' | 'prod';
+
+/** flag.json 卷面（D1 §二·切换权=CEO 令 authority_ref fail-closed 无 ref=拒绝） */
+export interface FlagVolume {
+  flag: FlagState;
+  authority_ref?: string | null;           // 手动切换必载·EXIT≥95 程序边 ref=run
+  switched_at?: string | null;
+}
+
+/** runner 状态卷面（round-queue/state/runner-state.json） */
+export interface RunnerState {
+  round_count: number;                     // FUSE 计数域（D1 §四：同根缺陷连续+1·test/prod 两计数不混——本域=sprint 轮计数）
+  fuse_marker?: boolean;                   // 熔断停候 CEO（fuse.marker+pending 冻结）
+  resume_stage?: number | null;            // 续跑边（pending-retry 轮→下轮 resumeStage=7）
+}
+
+/** 一轮链跑结果（chain runner 适配位·节 4 spawn 七席接装） */
+export interface RunResult {
+  ok: boolean;
+  run_dir: string;
+  aggregate: { average?: number; verdict?: 'loop_exit' | 'continue' | string };
+  err?: string;
+}
+
+export interface ChainRunner {
+  run(params: RoundParams, resumeStage: number | null): Promise<RunResult>;
+}
+
+export interface RoundParams {
+  run_id: string;
+  [k: string]: unknown;
+}
+
+/** D6 gate 接线出参面（activation_gate.py --checks-json 出参·白名单投影） */
+export interface ActivationVerdict {
+  ok: boolean;
+  gate: 'ready' | 'blocked';
+  unmet?: string[];
+  first_round_pending?: { state: 'stop' | 'released'; authority_ref?: string | null; brief?: Record<string, unknown> } | null;
+  switch_announce?: Record<string, unknown> | null;
+}
+
+export interface RoundRunnerIo {
+  /** 状态卷根（round-queue/）——注入面（白盒 tmp 形·产线=TriRMC 仓根 round-queue/） */
+  queueRoot: string;
+  /** D6 gate 判读（子进程 CLI·TC 检出路径注入——产线=/srv/fleet/TriCompany·929 现位） */
+  activationProbe?: (checks: Record<string, unknown>) => ActivationVerdict;
+  /** 十段链 runner（注入面·节 4 spawn 七席接装） */
+  chainRunner: ChainRunner;
+  /** 时刻串现查面（D-47：调用面传现查原值·件内零推算零估读） */
+  nowIso: () => string;
+}
+
+// ── 状态 IO（白名单投影形·D-46：零密值字段零原始卷 dump） ──────────────
+
+export function readFlag(io: RoundRunnerIo): FlagVolume {
+  const p = path.join(io.queueRoot, 'state', 'flag.json');
+  if (!existsSync(p)) return { flag: 'test' };   // 缺省=test（直进形·D1 §二缺省面）
+  const vol = JSON.parse(readFileSync(p, 'utf8')) as FlagVolume;
+  if (vol.flag !== 'debug' && vol.flag !== 'test' && vol.flag !== 'prod') {
+    throw new Error(`flag.json flag 值出三态域: ${String(vol.flag)}`);
+  }
+  return vol;
+}
+
+/** set_flag（D1 §二：手动切换必载 authority_ref 无 ref=拒绝 fail-closed·EXIT≥95 程序边=唯一自动写面） */
+export function setFlag(io: RoundRunnerIo, flag: FlagState, authorityRef: string | null): void {
+  if (authorityRef === null || !String(authorityRef).trim()) {
+    throw new Error('set_flag 拒绝：authority_ref 必载（CEO 切换权 fail-closed·无 ref=拒绝）');
+  }
+  const dir = path.join(io.queueRoot, 'state');
+  mkdirSync(dir, { recursive: true });
+  const vol: FlagVolume = { flag, authority_ref: String(authorityRef), switched_at: io.nowIso() };
+  writeFileSync(path.join(dir, 'flag.json'), JSON.stringify(vol, null, 2) + '\n', 'utf8');
+}
+
+export function readRunnerState(io: RoundRunnerIo): RunnerState {
+  const p = path.join(io.queueRoot, 'state', 'runner-state.json');
+  if (!existsSync(p)) return { round_count: 0, resume_stage: null };
+  return JSON.parse(readFileSync(p, 'utf8')) as RunnerState;
+}
+
+export function writeRunnerState(io: RoundRunnerIo, st: RunnerState): void {
+  const dir = path.join(io.queueRoot, 'state');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'runner-state.json'), JSON.stringify(st, null, 2) + '\n', 'utf8');
+}
+
+// ── D6 gate 接线（起跑前置检查位·子进程 CLI 调 TC 检出） ────────────────
+
+export interface GateProbePaths {
+  /** TC 检出根（产线=/srv/fleet/TriCompany·929 现位·河源 blob 全等已钉 D7 验证段） */
+  triCompanyRoot: string;
+  pythonBin?: string;                      // 缺省 python3
+}
+
+/**
+ * check_activation 子进程 CLI 探（施工选定形候 CTO 终审注）。
+ * 判据采集位=调用面（值席/runner 起跑前采集 A1-A4）——本面只喂入+读出参零判读。
+ */
+export function probeActivationGate(paths: GateProbePaths, checks: Record<string, unknown>): ActivationVerdict {
+  const py = paths.pythonBin ?? 'python3';
+  const gateScript = path.join(paths.triCompanyRoot, 'runtime', 'cognition', 'activation_gate.py');
+  const out = execFileSync(py, [gateScript, '--checks-json', JSON.stringify(checks)], {
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  return JSON.parse(out) as ActivationVerdict;
+}
+
+// ── loop 引擎本体（D1 §一 while 体照铸） ──────────────────────────────
+
+export interface LoopExitReason {
+  kind: 'prod' | 'fuse' | 'failed' | 'first_round_pending';
+  detail: string;                          // 白名单投影面（D-46：零密值零原始 payload dump）
+}
+
+export interface LoopOutcome {
+  exit: LoopExitReason | null;             // null=非终出局（保留扩展）
+  rounds_run: number;
+  final_state: RunnerState;
+}
+
+/**
+ * loop 引擎宿主（D1 §一主形）：点火后单进程自主迭代——
+ * 状态机四支（225 款二）：debug=体内候裁决／test=直进／EXIT≥95=break+flag→prod／8 轮 FUSE=break 熔断。
+ * prod 不入本循环（点火面拦截→单轮直走形·调用面守）。
+ */
+export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams }): Promise<LoopOutcome> {
+  const flagVol = readFlag(io);
+  if (flagVol.flag === 'prod') {
+    throw new Error('prod 不入 loop（点火面拦截→单轮直走形·D1 §一 prod 分支）');
+  }
+  const st = readRunnerState(io);
+  let rounds = 0;
+  let params = ignite.params;
+
+  // 起跑前置检查位（D6 gate 接线·gate=ready 方可入轮——D7 验证段四锚承录）
+  if (io.activationProbe) {
+    const v = io.activationProbe({});
+    if (!v.ok || v.gate !== 'ready') {
+      return {
+        exit: { kind: 'failed', detail: `activation gate blocked（unmet=${(v.unmet ?? []).join(',')}）——起跑门闭 fail-closed` },
+        rounds_run: 0,
+        final_state: st,
+      };
+    }
+  }
+
+  // 首轮知情停点消费面（resume_stage 续跑边·pending-retry 轮下轮=--resume-stage 7 形）
+  const resumeStage = st.resume_stage ?? null;
+
+  for (;;) { // while True（D1 §一）
+    const run = await io.chainRunner.run(params, resumeStage);   // 十段链+Skill 段程序化 spawn（节 4 接装）
+    if (!run.ok) {                                               // 款三纪律：段报错停 fail-closed
+      return { exit: { kind: 'failed', detail: `run failed: ${run.err ?? 'unknown'}` }, rounds_run: rounds, final_state: st };
+    }
+    const verdict = run.aggregate.verdict;
+    if (verdict === 'loop_exit') {                               // 联审均分≥95（≥95 含边界）
+      setFlag(io, 'prod', `run:${run.run_dir}`);                 // 唯一程序自动边（EXIT2·sanctioned）
+      return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, final_state: st };
+    }
+    if (st.round_count >= FUSE_MAX_ROUNDS) {                     // ①8 轮 FUSE（7→8 边界=F-2 钉）
+      st.fuse_marker = true;
+      writeRunnerState(io, st);                                  // 熔断停候 CEO（fuse.marker+pending 冻结）
+      return { exit: { kind: 'fuse', detail: `FUSE 熔断（round_count=${st.round_count}>=${FUSE_MAX_ROUNDS}）候 CEO` }, rounds_run: rounds, final_state: st };
+    }
+    if (flagVol.flag === 'debug') {                              // 体内候裁决事件（notice-202 门=事件源单值）
+      const ruling = await awaitCeoRuling(io);                   // continue/terminate/absent 三态
+      if (ruling === 'terminate') {
+        return { exit: { kind: 'failed', detail: 'CEO ruling=terminate' }, rounds_run: rounds, final_state: st };
+      }
+      if (ruling === 'absent') {
+        return { exit: null, rounds_run: rounds, final_state: st }; // 挂起（不迭代·fail-closed·候裁决投递）
+      }
+      // continue → 落下迭代
+    } // test=直进下轮迭代（不候裁决）
+    st.round_count += 1;
+    writeRunnerState(io, st);
+    rounds += 1;
+    params = nextRoundParams(st, params);                        // 自主迭代推进（非外部队列接力·款一勘正主形）
+  }
+}
+
+/** CEO 裁决事件源（round-queue/state/ceo-ruling.json 落卷=体内 await 事件源·>72h 升级催办挂起保持） */
+async function awaitCeoRuling(io: RoundRunnerIo): Promise<'continue' | 'terminate' | 'absent'> {
+  const p = path.join(io.queueRoot, 'state', 'ceo-ruling.json');
+  if (!existsSync(p)) return 'absent';
+  const vol = JSON.parse(readFileSync(p, 'utf8')) as { ruling?: string };
+  if (vol.ruling === 'continue' || vol.ruling === 'terminate') return vol.ruling;
+  return 'absent';
+}
+
+/** 轮间参数推进（自主迭代·白名单投影零密值） */
+function nextRoundParams(st: RunnerState, prev: RoundParams): RoundParams {
+  return { ...prev, round: (typeof prev.round === 'number' ? prev.round : 0) + 1, round_count: st.round_count };
+}

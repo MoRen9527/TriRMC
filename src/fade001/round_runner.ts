@@ -30,7 +30,64 @@ export const FUSE_MAX_ROUNDS = 8;          // ①8 轮 FUSE 值面（D1 §一 L2
 export const EXIT_GATE = 95;               // 轮转边 EXIT≥95→prod（≥95 含边界·唯一程序自动边）
 export const RESUME_STAGE_RETRY = 7;       // resume 段号=score 段（D5 拟稿 schema 承）
 
-export type FlagState = 'debug' | 'test' | 'prod';
+// P4 四态（CTO 定谳 7c389cac3 §三·CEO ③④）：prod / test / debug / joint_review（联审·debug 内嵌形——
+// joint_review 为 debug 的执行子态：debug 轮产出 opinions.json 即进入联审产出面，融合后回 test）。
+export type FlagState = 'debug' | 'test' | 'prod' | 'joint_review';
+
+/** P4 六边状态机（纯函数·可测·零副作用；接线面最小侵入——骨架期零行为变化）。 */
+export interface FlagSignals {
+  /** 最近一轮 aggregate average（缺=无信号·不转移） */
+  average?: number | null;
+  /** 自上次 flag 切换起的轮数（E2 的 8 轮判定域） */
+  roundsSinceFlag?: number | null;
+  /** debug 轮 opinions 已产出且融合确认（E3 人机环信号·批准权层随 CTO 对齐） */
+  opinionsFused?: boolean;
+}
+
+export interface FlagEdge {
+  from: FlagState;
+  to: FlagState;
+  auto: boolean;                            // true=程序自动边 / false=人机环边（CEO/COS 批准）
+  edge: 'E1_prod_low' | 'E2_test_stuck' | 'E3_debug_back' | 'E4_manual' | 'E5_test_high' | 'E6_sunday';
+  reason: string;
+}
+
+/**
+ * 六边转换判定（CTO 卷 §三）：
+ *  E1 prod ≤95 → test（自动回退）  E2 test 8 轮未回 >95 → debug（自动）
+ *  E3 debug 联审融合 → test（人机环）  E4 CEO/COS 手动 → test（setFlag 面·本函数不算）
+ *  E5 test >95 → prod（自动·既有 EXIT_GATE 边保留）  E6 prod 周日迁移（cron 面·非本函数域）
+ * 骨架期：本函数只判读不执行（runLoop 接线=log 面·flag 写面仍走 setFlag fail-closed）。
+ */
+export function nextFlagEdge(current: FlagState, s: FlagSignals): FlagEdge | null {
+  const avg = s.average ?? null;
+  if (current === 'prod' && avg !== null && avg <= EXIT_GATE) {
+    return { from: 'prod', to: 'test', auto: true, edge: 'E1_prod_low',
+      reason: `prod average ${avg} <= ${EXIT_GATE} -> auto fallback to test` };
+  }
+  if (current === 'test' && avg !== null && avg <= EXIT_GATE && (s.roundsSinceFlag ?? 0) >= 8) {
+    return { from: 'test', to: 'debug', auto: true, edge: 'E2_test_stuck',
+      reason: `test below/at ${EXIT_GATE} for ${s.roundsSinceFlag} rounds >= 8 -> debug (7-seat joint review)` };
+  }
+  if (current === 'debug' && s.opinionsFused) {
+    return { from: 'debug', to: 'test', auto: false, edge: 'E3_debug_back',
+      reason: 'debug opinions fused (human-loop) -> back to test' };
+  }
+  if (current === 'test' && avg !== null && avg > EXIT_GATE) {
+    return { from: 'test', to: 'prod', auto: true, edge: 'E5_test_high',
+      reason: `test average ${avg} > ${EXIT_GATE} -> prod (existing EXIT_GATE edge)` };
+  }
+  return null;
+}
+
+/**
+ * P4 批准权分配（CEO④ 勘正形·CTO 对齐结论 2026-11-21）：`charter_approval` 字段按态分配——
+ * debug 态任务书=CEO 批 / test+prod 态=COS 代批（approver 枚举 CEO|COS）。
+ * 自动拾取链启用时点=P6 收口后（P3-P6 期间不启用·防同面互踩·COO 令四）。
+ */
+export function flagApprovalOwner(edge: FlagEdge): 'CEO' | 'COS' {
+  return edge.to === 'debug' || edge.edge === 'E3_debug_back' ? 'CEO' : 'COS';
+}
 
 /** flag.json 卷面（D1 §二·切换权=CEO 令 authority_ref fail-closed 无 ref=拒绝） */
 export interface FlagVolume {
@@ -44,6 +101,10 @@ export interface RunnerState {
   round_count: number;                     // FUSE 计数域（D1 §四：同根缺陷连续+1·test/prod 两计数不混——本域=sprint 轮计数）
   fuse_marker?: boolean;                   // 熔断停候 CEO（fuse.marker+pending 冻结）
   resume_stage?: number | null;            // 续跑边（pending-retry 轮→下轮 resumeStage=7）
+  // ── P4 状态机载体扩展（CTO 7c389cac3 §三·状态载体=runner-state 扩展）──
+  flag_state?: FlagState | null;           // 现态快照（真源=flag.json·本字段=轮历史侧写）
+  flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
+  round_history?: Array<{ round: number; average?: number | null; flag?: FlagState | null; at?: string }> | null;
 }
 
 /** 一轮链跑结果（chain runner 适配位·节 4 spawn 七席接装） */
@@ -89,8 +150,9 @@ export function readFlag(io: RoundRunnerIo): FlagVolume {
   const p = path.join(io.queueRoot, 'state', 'flag.json');
   if (!existsSync(p)) return { flag: 'test' };   // 缺省=test（直进形·D1 §二缺省面）
   const vol = JSON.parse(readFileSync(p, 'utf8')) as FlagVolume;
-  if (vol.flag !== 'debug' && vol.flag !== 'test' && vol.flag !== 'prod') {
-    throw new Error(`flag.json flag 值出三态域: ${String(vol.flag)}`);
+  // P4 四态域（CTO 7c389cac3 §三）：prod/test/debug/joint_review（joint_review=debug 执行子态）
+  if (vol.flag !== 'debug' && vol.flag !== 'test' && vol.flag !== 'prod' && vol.flag !== 'joint_review') {
+    throw new Error(`flag.json flag 值出四态域: ${String(vol.flag)}`);
   }
   return vol;
 }

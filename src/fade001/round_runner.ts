@@ -285,6 +285,10 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       // released → 放行落下迭代（放行一次非逐轮·后续轮零复查 gateVerdict）
     }
     if (flagVol.flag === 'debug') {                              // 体内候裁决事件（notice-202 门=事件源单值）
+      // ── P4 接线件（COO 派工 2026-11-21·自动拾取全链最后一段）──
+      // debug 联审毕（opinions.json 落）→ E3 钩子：调生成器（COS 契约冻结面·fail-closed
+      // 不重试·产物零批准效力·auto_dispatch 钩子不得代置）→ 任务书落卷 + state 字段写。
+      await tryCharterHook(io, st, params);
       const ruling = await awaitCeoRuling(io);                   // continue/terminate/absent 三态
       if (ruling === 'terminate') {
         return { exit: { kind: 'failed', detail: 'CEO ruling=terminate' }, rounds_run: rounds, final_state: st };
@@ -298,6 +302,32 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     writeRunnerState(io, st);
     rounds += 1;
     params = nextRoundParams(st, params);                        // 自主迭代推进（非外部队列接力·款一勘正主形）
+  }
+}
+
+/** P4 接线件（COO 派工 2026-11-21）：debug 联审毕→生成器调用钩子（COS 契约冻结面）。
+ *  幂等：pending_charter_ref 已在=不重复生成；fail-closed：生成器拒/异常=state 不动，stderr 如实留痕。 */
+export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<void> {
+  const runDir = typeof params.runDir === 'string' ? params.runDir : '';
+  if (!runDir) return;
+  const opinionsPath = path.join(runDir, 'opinions.json');
+  if (!existsSync(opinionsPath)) return;                        // 联审未产=零行为（no-op）
+  if (st.pending_charter_ref) return;                           // 幂等：已挂待批不重复
+  try {
+    const mod = await import('./charter_generator.js');
+    const res = mod.generateCharterFromFile(opinionsPath, { approver: 'CEO' });  // debug 链=CEO 批（CEO④ 形）
+    if (!res.ok || !res.charter) {
+      console.error(`[fade001:charter-hook] generator rejected（fail-closed 不写 pending）: ${res.reason ?? 'unknown'}`);
+      return;
+    }
+    const stamp = io.nowIso().replace(/[-:.]/g, '');
+    const charterPath = path.join(runDir, `charter-${stamp}.json`);
+    writeFileSync(charterPath, JSON.stringify(res.charter, null, 2) + '\n', 'utf8');
+    st.pending_charter_ref = charterPath;
+    st.charter_approval = 'CEO';
+    writeRunnerState(io, st);
+  } catch (e) {
+    console.error(`[fade001:charter-hook] generator unavailable（fail-closed）: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

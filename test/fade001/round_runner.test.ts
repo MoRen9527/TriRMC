@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   runLoop, readFlag, setFlag, readRunnerState, writeRunnerState,
-  nextFlagEdge, flagApprovalOwner,
+  nextFlagEdge, flagApprovalOwner, tryCharterHook,
   FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
   type ActivationVerdict, type FlagVolume, type RunnerState,
@@ -434,6 +434,38 @@ describe('GD 护栏随铸（D-46/D-47 白盒）', () => {
     assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker'].includes(k)));  // 白名单域外零承载
     assert.strictEqual('brief' in out.final_state, false);        // 呈报载荷走 exit detail 投影面零入 state
   });
+});
+
+test('P4 接线件 hook 三态：no-op（无 opinions）/fail-closed（坏 opinions 不写 pending）/成功（写 ref+CEO approval）', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rr-hook-'));
+  try {
+    const io = makeIo(root, makeRunner([]), undefined);
+    const st: any = { round_count: 1 };
+    // 1) no-op
+    await tryCharterHook(io, st, { run_id: 'h1', runDir: root });
+    assert.equal(st.pending_charter_ref, undefined);
+    // 2) fail-closed（坏卷）
+    writeFileSync(path.join(root, 'opinions.json'), '{}');
+    const errs: string[] = [];
+    const origErr = console.error;
+    console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')); };
+    try { await tryCharterHook(io, st, { run_id: 'h1', runDir: root }); } finally { console.error = origErr; }
+    assert.equal(st.pending_charter_ref, undefined);
+    assert.ok(errs.some((l) => l.includes('charter-hook')), 'fail-closed 如实留痕');
+    // 3) 成功（合法五字段卷）
+    writeFileSync(path.join(root, 'opinions.json'), JSON.stringify({
+      schema_version: '1.0.0', run_id: 'h1',
+      opinions: [{ opinion_id: 'op1', title: 't', target: 'a.ts', change: 'c', verify: 'v', rollback: 'r' }],
+    }));
+    await tryCharterHook(io, st, { run_id: 'h1', runDir: root });
+    assert.ok(typeof st.pending_charter_ref === 'string' && st.pending_charter_ref.length > 0);
+    assert.equal(st.charter_approval, 'CEO');
+    assert.ok(existsSync(st.pending_charter_ref));
+    // 4) 幂等：再调不重复
+    const first = st.pending_charter_ref;
+    await tryCharterHook(io, st, { run_id: 'h1', runDir: root });
+    assert.equal(st.pending_charter_ref, first);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('P4 六边状态机：E1 prod<=95→test / E2 test 8轮>95→debug / E5 test>95→prod / E3 debug+融合→test / 批准权 CEO|COS', () => {

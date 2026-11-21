@@ -70,6 +70,10 @@ interface StageDef {
 // P2 修形（2026-11-21 CTO 裁）：6_600_000(110min·余量仅5min边际紧)->7_200_000(120min·余量15min)；
 // 7 席串行最坏 7x900s=105min·末席慢响应/重试窗防误杀。回滚=本常量一行。
 export const SPAWN_STAGE_TIMEOUT_MS = 7_200_000;
+// ── P3 灰度形（CTO 定谳 7c389cac3 §一·2026-11-21）：段 3/段 8 spawn cos 化切换 ──
+// env FADE_PLAN_SPAWN=1 / FADE_CLOSE_SPAWN=1 → spawn 形；缺省=CLI 形（现役·零行为变化）。
+const PLAN_SPAWN = process.env.FADE_PLAN_SPAWN === '1';
+const CLOSE_SPAWN = process.env.FADE_CLOSE_SPAWN === '1';
 
 /** 十段链段序表（硬串行·禁跳段——D1 §四；argv=各段 argparse 必载面白名单·2026-11-21 现役勘定） */
 export const STAGES: StageDef[] = [
@@ -82,11 +86,14 @@ export const STAGES: StageDef[] = [
     argv: (p) => ['--run-dir', p.runDir],
   },
   {
-    name: 'plan_scope', script: 'plan_scope.py', output: 'plan.json',
-    // --operating-root 必传绝对形（CLI 缺省=相对 cwd 解析·第八发实锚 2026-11-21）+
-    // --start-date（周目录年段推算第一候选分支入参·零传=fallthrough 面）
-    argv: (p) => ['--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
-      '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'), '--start-date', p.startDate],
+    name: 'plan_scope',
+    script: PLAN_SPAWN ? 'plan_skill_spawn.py' : 'plan_scope.py',
+    output: 'plan.json',
+    // CLI 形：--operating-root 必传绝对形 + --start-date；spawn 形：run 面参数即可（schema 校验在脚本内 fail-closed）
+    argv: PLAN_SPAWN
+      ? (p) => ['--run-dir', p.runDir, '--run-id', p.runId, '--from-week', p.fromWeek, '--to-week', p.toWeek]
+      : (p) => ['--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
+        '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'), '--start-date', p.startDate],
   },
   {
     name: 'dce', script: 'dce_steps.py', output: 'dce.json',
@@ -110,7 +117,9 @@ export const STAGES: StageDef[] = [
     argv: (p) => ['--run-dir', p.runDir, '--run-id', p.runId],   // spawn 七席段（现役正形·dsh headless CLI）
   },
   {
-    name: 'close_skill', script: 'close_skill.py', output: 'close.json',
+    name: 'close_skill',
+    script: CLOSE_SPAWN ? 'close_skill_spawn.py' : 'close_skill.py',
+    output: 'close.json',
     argv: (p) => ['--run-dir', p.runDir, '--run-id', p.runId, '--from-week', p.fromWeek, '--to-week', p.toWeek],
   },
   {

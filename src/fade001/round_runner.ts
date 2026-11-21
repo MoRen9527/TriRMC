@@ -305,7 +305,8 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
   }
 }
 
-/** P4 接线件（COO 派工 2026-11-21）：debug 联审毕→生成器调用钩子（COS 契约冻结面）。
+/** @internal P4 接线件（COO 派工 2026-11-21）：debug 联审毕→生成器调用钩子（COS 契约冻结面）。
+ *  本钩子=debug 态专用·approver 恒 CEO（CTO 终审附注）；若将来多态复用→改走 flagApprovalOwner 派生。
  *  幂等：pending_charter_ref 已在=不重复生成；fail-closed：生成器拒/异常=state 不动，stderr 如实留痕。 */
 export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<void> {
   const runDir = typeof params.runDir === 'string' ? params.runDir : '';

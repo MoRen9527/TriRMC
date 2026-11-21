@@ -1,35 +1,5 @@
-// ── TriMC Prompt Cache Module ──
-// Phase 2 Tier 1: Cache annotation infrastructure.
-//
-// Exports:
-//   Core: CacheState, CacheMetrics, CacheControlConfig
-//   State: createCacheState, updateCacheState, resetCacheStateForNewSession
-//   Hash:  computeSystemPromptHash, computeToolsHash
-//   Metrics: estimateCacheHit, buildCacheMetrics
-//   Config: getCacheControlConfig
-
-export {
-  createCacheState,
-  updateCacheState,
-  resetCacheStateForNewSession,
-} from './cache-control.js';
-
-export {
-  computeSystemPromptHash,
-  computeToolsHash,
-} from './cache-control.js';
-
-export {
-  estimateCacheHit,
-  buildCacheMetrics,
-} from './cache-control.js';
-
-export {
-  getCacheControlConfig,
-} from './cache-control.js';
-
-export type {
-  CacheState,
-  CacheMetrics,
-  CacheControlConfig,
-} from './cache-control.js';
+// ── Prompt cache module (annotation infrastructure) (thin shell · C4 batch 2a stage-2) ──
+// Moved into @tricompany/orchestration-kit/prompt-cache (single source of truth; CTO ruling
+// form B 2026-11-21 — TriMMC/TriRMC divergence cured). This forwarding shell keeps
+// every existing relative import path working unchanged.
+export * from '@tricompany/orchestration-kit/prompt-cache';

@@ -537,10 +537,10 @@ export function createTriMCApp(env: TriMCEnv) {
                 tier: parsed.tier ?? 'main',
                 cwd: parsed.cwd ?? env.cwd,
                 maxTurns: parsed.maxTurns ?? 25,
-                model: parsed.model ?? (await resolveDefaultModel()),
+                model: parsed.model,
                 memdirPath: env.memdirPath,
                 systemPromptOverride: parsed.systemPrompt,
-              });
+              }, { resolveDefaultModel });
               loopOptions = {
                 ...assembly.options,
                 messages: parsed.messages ?? [],

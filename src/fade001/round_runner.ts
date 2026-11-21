@@ -23,7 +23,7 @@
 // 下轮点火指令携带 resumeStage=7（D5 拟稿 schema 承·--resume-stage 7 形）。
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const FUSE_MAX_ROUNDS = 8;          // ①8 轮 FUSE 值面（D1 §一 L21 定谳值·边界案=F-2 7→8 钉）
@@ -106,7 +106,7 @@ export interface RunnerState {
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
   // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
-  charter_approval?: 'CEO' | 'COS' | null; // 批准权属主（按 flag 态分配·flagApprovalOwner 派生）
+  charter_approval?: 'CEO' | 'COS' | 'APPROVED_CEO' | 'APPROVED_COS' | null; // 待批=属主名·已批=APPROVED_*（CTO 裁：挂载后更新已批态）
   round_history?: Array<{ round: number; average?: number | null; flag?: FlagState | null; at?: string }> | null;
 }
 
@@ -296,7 +296,9 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       if (ruling === 'absent') {
         return { exit: null, rounds_run: rounds, final_state: st }; // 挂起（不迭代·fail-closed·候裁决投递）
       }
-      // continue → 落下迭代
+      // continue=批准 → 挂载 choreography（CTO 裁：批准后挂树·发布行为·拾取面可见）
+      await tryCharterMount(io, st, params);
+      // 落下迭代
     } // test=直进下轮迭代（不候裁决）
     st.round_count += 1;
     writeRunnerState(io, st);
@@ -329,6 +331,28 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
     writeRunnerState(io, st);
   } catch (e) {
     console.error(`[fade001:charter-hook] generator unavailable（fail-closed）: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** @internal P4 挂载 choreography（CTO 裁 2026-11-21·第三形）：CEO 批准后任务书挂
+ *  trees/<week>/trees/fade001-evolve-<ts>/（复制形·拾取面扫描要实体）。链序=生成→CEO 批→挂载→拾取
+ *  （挂树=发布行为·未批不发布）；三形照役：fail-closed（失败=state 不动+stderr）/幂等（APPROVED_* 不重复）/
+ *  树规范（operating-records 周目录·禁仓库根）。 */
+export async function tryCharterMount(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<void> {
+  if (!st.pending_charter_ref || !existsSync(st.pending_charter_ref)) return;
+  if (st.charter_approval === 'APPROVED_CEO' || st.charter_approval === 'APPROVED_COS') return;  // 幂等
+  const tmvRoot = typeof params.tmvRoot === 'string' ? params.tmvRoot : '';
+  const week = typeof params.fromWeek === 'string' ? params.fromWeek : '';
+  if (!tmvRoot || !week) { console.error('[fade001:charter-mount] tmvRoot/fromWeek missing (fail-closed)'); return; }
+  const stamp = io.nowIso().replace(/[-:.]/g, '');
+  const dir = path.join(tmvRoot, 'docs', 'workflow', 'operating-records', week, 'trees', `fade001-evolve-${stamp}`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(st.pending_charter_ref, path.join(dir, path.basename(st.pending_charter_ref)));
+    st.charter_approval = st.charter_approval === 'COS' ? 'APPROVED_COS' : 'APPROVED_CEO';
+    writeRunnerState(io, st);
+  } catch (e) {
+    console.error(`[fade001:charter-mount] mount failed (fail-closed): ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

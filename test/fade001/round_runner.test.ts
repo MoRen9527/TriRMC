@@ -9,12 +9,12 @@
 
 import { describe, it, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   runLoop, readFlag, setFlag, readRunnerState, writeRunnerState,
-  nextFlagEdge, flagApprovalOwner, tryCharterHook,
+  nextFlagEdge, flagApprovalOwner, tryCharterHook, tryCharterMount,
   FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
   type ActivationVerdict, type FlagVolume, type RunnerState,
@@ -434,6 +434,41 @@ describe('GD 护栏随铸（D-46/D-47 白盒）', () => {
     assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker'].includes(k)));  // 白名单域外零承载
     assert.strictEqual('brief' in out.final_state, false);        // 呈报载荷走 exit detail 投影面零入 state
   });
+});
+
+test('P4 挂载 choreography（CTO 裁第三形）：批准后挂树复制形/幂等/无 ref=no-op/树规范周目录', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'rr-mnt-'));
+  const tmv = mkdtempSync(path.join(tmpdir(), 'rr-tmv-'));
+  const runDir = mkdtempSync(path.join(tmpdir(), 'rr-rd-'));
+  try {
+    const io = makeIo(root, makeRunner([]), undefined);
+    const st: any = { round_count: 1 };
+    const params = { run_id: 'm1', runDir, tmvRoot: tmv, fromWeek: '2026-W47' };
+    // no-op：无 pending ref
+    await tryCharterMount(io, st, params);
+    assert.equal(st.charter_approval, undefined);
+    // 挂载：有 ref（复制形+周目录）
+    const charter = path.join(runDir, 'charter-x.json');
+    writeFileSync(charter, '{"k":1}');
+    st.pending_charter_ref = charter;
+    st.charter_approval = 'CEO';  // 待批态
+    const mErrs: string[] = [];
+    const oErr = console.error;
+    console.error = (...a: unknown[]) => { mErrs.push(a.map(String).join(' ')); };
+    try { await tryCharterMount(io, st, params); } finally { console.error = oErr; }
+    if (mErrs.length) console.log('MOUNT-ERR:', mErrs.join(' | '));
+    assert.equal(st.charter_approval, 'APPROVED_CEO');
+    const treesDir = path.join(tmv, 'docs', 'workflow', 'operating-records', '2026-W47', 'trees');
+    assert.ok(readdirSync(treesDir).some((d) => d.startsWith('fade001-evolve-')), '树规范周目录挂载');
+    // 幂等
+    const before = st.charter_approval;
+    await tryCharterMount(io, st, params);
+    assert.equal(st.charter_approval, before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(tmv, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
 });
 
 test('P4 接线件 hook 三态：no-op（无 opinions）/fail-closed（坏 opinions 不写 pending）/成功（写 ref+CEO approval）', async () => {

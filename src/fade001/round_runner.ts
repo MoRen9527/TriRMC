@@ -83,7 +83,7 @@ export function nextFlagEdge(current: FlagState, s: FlagSignals): FlagEdge | nul
 /**
  * P4 批准权分配（CEO④ 勘正形·CTO 对齐结论 2026-11-21）：`charter_approval` 字段按态分配——
  * debug 态任务书=CEO 批 / test+prod 态=COS 代批（approver 枚举 CEO|COS）。
- * 自动拾取链启用时点=P6 收口后（P3-P6 期间不启用·防同面互踩·COO 令四）。
+ * 自动拾取链启用：**直接启用（CEO 决议戊 2026-11-21）**——旧口径「P6 收口后」已作废（CTO 勘正）。
  */
 export function flagApprovalOwner(edge: FlagEdge): 'CEO' | 'COS' {
   return edge.to === 'debug' || edge.edge === 'E3_debug_back' ? 'CEO' : 'COS';
@@ -104,6 +104,9 @@ export interface RunnerState {
   // ── P4 状态机载体扩展（CTO 7c389cac3 §三·状态载体=runner-state 扩展）──
   flag_state?: FlagState | null;           // 现态快照（真源=flag.json·本字段=轮历史侧写）
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
+  // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
+  pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
+  charter_approval?: 'CEO' | 'COS' | null; // 批准权属主（按 flag 态分配·flagApprovalOwner 派生）
   round_history?: Array<{ round: number; average?: number | null; flag?: FlagState | null; at?: string }> | null;
 }
 

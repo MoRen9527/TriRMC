@@ -7,13 +7,14 @@
 // 如实注：§一C 双事件 AND 门（cos-evolution-decision）=71f2057 铸形范围外（D1 §一主形照铸·
 //   增补形候变更令）——本族不铸不存案·零夹带。
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   runLoop, readFlag, setFlag, readRunnerState, writeRunnerState,
+  nextFlagEdge, flagApprovalOwner,
   FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
   type ActivationVerdict, type FlagVolume, type RunnerState,
@@ -98,10 +99,10 @@ describe('F-1 flag 存取权属门', () => {
     const io = makeIo(root, makeRunner([]).runner);
     assert.deepStrictEqual(readFlag(io), { flag: 'test' });
   });
-  it('F-1e flag 值出三态域=throw（域校验 fail-closed）', () => {
+  it('F-1e flag 值出四态域=throw（域校验 fail-closed·P4 四态扩展）', () => {
     seedFlag({ flag: 'staging' as unknown as FlagVolume['flag'] });
     const io = makeIo(root, makeRunner([]).runner);
-    assert.throws(() => readFlag(io), /出三态域/);
+    assert.throws(() => readFlag(io), /出四态域/);
   });
 });
 
@@ -433,4 +434,16 @@ describe('GD 护栏随铸（D-46/D-47 白盒）', () => {
     assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker'].includes(k)));  // 白名单域外零承载
     assert.strictEqual('brief' in out.final_state, false);        // 呈报载荷走 exit detail 投影面零入 state
   });
+});
+
+test('P4 六边状态机：E1 prod<=95→test / E2 test 8轮>95→debug / E5 test>95→prod / E3 debug+融合→test / 批准权 CEO|COS', () => {
+  assert.equal(nextFlagEdge('prod', { average: 90 })?.edge, 'E1_prod_low');
+  assert.equal(nextFlagEdge('prod', { average: 96 }), null);
+  assert.equal(nextFlagEdge('test', { average: 90, roundsSinceFlag: 8 })?.edge, 'E2_test_stuck');  // 8 轮持续 <=95 才 stuck
+  assert.equal(nextFlagEdge('test', { average: 90, roundsSinceFlag: 3 }), null);  // 未到 8 轮不升 debug
+  assert.equal(nextFlagEdge('test', { average: 96 })?.edge, 'E5_test_high');
+  const e3 = nextFlagEdge('debug', { opinionsFused: true });
+  assert.equal(e3?.edge, 'E3_debug_back');
+  assert.equal(flagApprovalOwner(e3!), 'CEO');
+  assert.equal(flagApprovalOwner(nextFlagEdge('test', { average: 96 })!), 'COS');
 });

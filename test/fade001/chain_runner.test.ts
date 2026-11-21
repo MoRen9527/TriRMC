@@ -273,8 +273,13 @@ test('CS-12 段序表值面：十段名+产物名+spawn 段=score_skill（spawn 
   assert.equal(spawnSeg?.script, 'score_skill_spawn.py');
 });
 
-test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=6_600_000（7×900s+余量）·段 7 覆写形在位·余段缺省', () => {
-  assert.equal(SPAWN_STAGE_TIMEOUT_MS, 6_600_000);   // 7 席×900s+开销余量（COO 释放令条款③勘定值面）
+test('P3 灰度形：段 3/8 默认 CLI script（env 未设）·spawn 形 env FADE_PLAN_SPAWN/FADE_CLOSE_SPAWN 切（CTO 7c389cac3）', () => {
+  assert.equal(STAGES[2].script, 'plan_scope.py');   // env 未设=CLI 现役形（零行为变化）
+  assert.equal(STAGES[7].script, 'close_skill.py');
+});
+
+test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=7_200_000（7×900s+15min 余量（CTO 2026-11-21 上调））·段 7 覆写形在位·余段缺省', () => {
+  assert.equal(SPAWN_STAGE_TIMEOUT_MS, 7_200_000);   // 7 席×900s+开销余量（COO 释放令条款③勘定值面）
   const spawnSeg = STAGES.find((s) => s.name === 'score_skill');
   assert.equal(spawnSeg?.timeoutMs, SPAWN_STAGE_TIMEOUT_MS);
   const overridden = STAGES.filter((s) => s.timeoutMs !== undefined);

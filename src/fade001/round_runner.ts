@@ -106,7 +106,10 @@ export interface RunnerState {
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
   // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
-  charter_approval?: 'CEO' | 'COS' | 'APPROVED_CEO' | 'APPROVED_COS' | null; // 待批=属主名·已批=APPROVED_*（CTO 裁：挂载后更新已批态）
+  // charter_approval 值表登记（CTO 附注 2026-11-21·防枚举漂散·照 rubric_defect 先例）：
+  //   null = 未派生（无待批任务书）· 'CEO'/'COS' = 待批态（属主名·钩子写入）
+  //   'APPROVED_CEO'/'APPROVED_COS' = 已批态（挂载 choreography 后更新·拾取面可见）
+  charter_approval?: 'CEO' | 'COS' | 'APPROVED_CEO' | 'APPROVED_COS' | null;
   round_history?: Array<{ round: number; average?: number | null; flag?: FlagState | null; at?: string }> | null;
 }
 

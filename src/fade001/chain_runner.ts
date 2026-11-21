@@ -67,7 +67,9 @@ interface StageDef {
  * timeout 缺省 900s·7 席串行→段总窗上限=7×900s+开销余量≈6_600_000ms（110min）——
  * 默认段超时 900s 会截杀 spawn 段（真发前必修面·2026-11-21 勘定）。
  */
-export const SPAWN_STAGE_TIMEOUT_MS = 6_600_000;
+// P2 修形（2026-11-21 CTO 裁）：6_600_000(110min·余量仅5min边际紧)->7_200_000(120min·余量15min)；
+// 7 席串行最坏 7x900s=105min·末席慢响应/重试窗防误杀。回滚=本常量一行。
+export const SPAWN_STAGE_TIMEOUT_MS = 7_200_000;
 
 /** 十段链段序表（硬串行·禁跳段——D1 §四；argv=各段 argparse 必载面白名单·2026-11-21 现役勘定） */
 export const STAGES: StageDef[] = [

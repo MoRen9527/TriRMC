@@ -67,13 +67,14 @@ interface StageDef {
  * timeout 缺省 900s·7 席串行→段总窗上限=7×900s+开销余量≈6_600_000ms（110min）——
  * 默认段超时 900s 会截杀 spawn 段（真发前必修面·2026-11-21 勘定）。
  */
-// P2 修形（2026-11-21 CTO 裁）：6_600_000(110min·余量仅5min边际紧)->7_200_000(120min·余量15min)；
-// 7 席串行最坏 7x900s=105min·末席慢响应/重试窗防误杀。回滚=本常量一行。
 export const SPAWN_STAGE_TIMEOUT_MS = 7_200_000;
+
 // ── P3 灰度形（CTO 定谳 7c389cac3 §一·2026-11-21）：段 3/段 8 spawn cos 化切换 ──
 // env FADE_PLAN_SPAWN=1 / FADE_CLOSE_SPAWN=1 → spawn 形；缺省=CLI 形（现役·零行为变化）。
-const PLAN_SPAWN = process.env.FADE_PLAN_SPAWN === '1';
-const CLOSE_SPAWN = process.env.FADE_CLOSE_SPAWN === '1';
+// 回滚=去 env 即回 CLI 形（双形并存·灰度首用）。
+// CEO 任务书 v7 flip（2026-11-22）：段 3/8 spawn 化=默认正形（P3 接线毕）；env ='0' 可关回 CLI 形（回滚锚）。
+const PLAN_SPAWN = process.env.FADE_PLAN_SPAWN !== '0';
+const CLOSE_SPAWN = process.env.FADE_CLOSE_SPAWN !== '0';
 
 /** 十段链段序表（硬串行·禁跳段——D1 §四；argv=各段 argparse 必载面白名单·2026-11-21 现役勘定） */
 export const STAGES: StageDef[] = [
@@ -89,7 +90,9 @@ export const STAGES: StageDef[] = [
     name: 'plan_scope',
     script: PLAN_SPAWN ? 'plan_skill_spawn.py' : 'plan_scope.py',
     output: 'plan.json',
-    // CLI 形：--operating-root 必传绝对形 + --start-date；spawn 形：run 面参数即可（schema 校验在脚本内 fail-closed）
+    // CLI 形：--operating-root 必传绝对形（CLI 缺省=相对 cwd 解析·第八发实锚 2026-11-21）+
+    // --start-date（周目录年段推算第一候选分支入参·零传=fallthrough 面）
+    // spawn 形（P3 灰度）：单席 cos 产出 plan.json·argv 仅 run 面（schema 校验在脚本内 fail-closed）
     argv: PLAN_SPAWN
       ? (p) => ['--run-dir', p.runDir, '--run-id', p.runId, '--from-week', p.fromWeek, '--to-week', p.toWeek]
       : (p) => ['--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
@@ -118,6 +121,8 @@ export const STAGES: StageDef[] = [
   },
   {
     name: 'close_skill',
+    // P3 灰度：spawn 形单席 cos 产出 close.json（upgrade_list_state 契约硬项校验在脚本内 fail-closed）·
+    // argv 两形同面（run-dir/run-id/from-week/to-week）
     script: CLOSE_SPAWN ? 'close_skill_spawn.py' : 'close_skill.py',
     output: 'close.json',
     argv: (p) => ['--run-dir', p.runDir, '--run-id', p.runId, '--from-week', p.fromWeek, '--to-week', p.toWeek],

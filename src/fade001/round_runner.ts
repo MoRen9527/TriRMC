@@ -22,7 +22,8 @@
 // resume 轮间指令面（D1 §六A·勘面卷 §七.3 续跑边）：retry_flag.json pending-retry 轮→
 // 下轮点火指令携带 resumeStage=7（D5 拟稿 schema 承·--resume-stage 7 形）。
 
-import { execFileSync } from 'node:child_process';
+import { SPAWN_STAGE_TIMEOUT_MS } from './chain_runner.js';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -259,6 +260,8 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       return { exit: { kind: 'failed', detail: `run failed: ${run.err ?? 'unknown'}` }, rounds_run: rounds, final_state: st };
     }
     const verdict = run.aggregate.verdict;
+    // ── v7 轮末钩（CTO ce26401a9·loop 层）：十段全毕 → 七席联审（两对象）→opinions→生成器→pending ──
+    await runJointReviewHook(io, st, params);
     if (verdict === 'loop_exit') {                               // 联审均分≥95（≥95 含边界）
       setFlag(io, 'prod', `run:${run.run_dir}`);                 // 唯一程序自动边（EXIT2·sanctioned）
       return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, final_state: st };
@@ -288,10 +291,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       // released → 放行落下迭代（放行一次非逐轮·后续轮零复查 gateVerdict）
     }
     if (flagVol.flag === 'debug') {                              // 体内候裁决事件（notice-202 门=事件源单值）
-      // ── P4 接线件（COO 派工 2026-11-21·自动拾取全链最后一段）──
-      // debug 联审毕（opinions.json 落）→ E3 钩子：调生成器（COS 契约冻结面·fail-closed
-      // 不重试·产物零批准效力·auto_dispatch 钩子不得代置）→ 任务书落卷 + state 字段写。
-      await tryCharterHook(io, st, params);
+      // P4 tie 位移（CTO ce26401a9 v7）：生成器链上移轮末钩（runJointReviewHook 内），本块仅裁决事件。
       const ruling = await awaitCeoRuling(io);                   // continue/terminate/absent 三态
       if (ruling === 'terminate') {
         return { exit: { kind: 'failed', detail: 'CEO ruling=terminate' }, rounds_run: rounds, final_state: st };
@@ -303,11 +303,36 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       await tryCharterMount(io, st, params);
       // 落下迭代
     } // test=直进下轮迭代（不候裁决）
+    // 铸件族窗 clear-write 修形（CTO 裁·2026-11-22 A 部署）：resume 轮毕清写——防放行态下二次点火
+    // 陈旧 resume_stage 静默跳段（三形态实锤：continue 轮毕不清→同段重复→FUSE）。写前清=fail-safe 形。
+    st.resume_stage = null;
     st.round_count += 1;
     writeRunnerState(io, st);
     rounds += 1;
     params = nextRoundParams(st, params);                        // 自主迭代推进（非外部队列接力·款一勘正主形）
   }
+}
+
+/** @internal v7 loop 尾段七席联审轮末钩（CEO 任务书 v7·CTO ce26401a9 定形·loop 层非 fade 段）：
+ *  十段全毕（run.ok）后发起七席联审（两对象×各席≥3 部门维度）→opinions.json（schema 2.0.0·
+ *  improvements 五字段）→ 生成器 → 任务书 → pending_charter_ref 写（与 P4 钩子同链）。
+ *  env LOOP_JOINT_REVIEW=0 可关（回滚锚）；fail-closed：联审败=state 不动+stderr 留痕；幂等：已有待批不重复。 */
+export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<void> {
+  if (process.env.LOOP_JOINT_REVIEW === '0') return;
+  const runDir = typeof params.runDir === 'string' ? params.runDir : '';
+  if (!runDir) return;
+  if (st.pending_charter_ref) return;   // 幂等
+  const cogDir = process.env.TRICO_COGNITION_DIR ?? '/srv/fleet/TriCompany/runtime/cognition';
+  const script = path.join(cogDir, 'loop_joint_review_spawn.py');
+  if (!existsSync(script)) { console.error('[fade001:joint-review] script missing (fail-closed): ' + script); return; }
+  const py = process.env.FADE_PYTHON ?? 'python3';
+  const r = spawnSync(py, [script, '--run-dir', runDir, '--run-id', String(params.run_id ?? '')],
+    { encoding: 'utf8', timeout: SPAWN_STAGE_TIMEOUT_MS });
+  if (r.status !== 0) {
+    console.error('[fade001:joint-review] spawn rc=' + String(r.status) + ' (fail-closed): ' + String((r.stderr ?? '').slice(-200)));
+    return;
+  }
+  await tryCharterHook(io, st, params);   // opinions.json → 生成器 → pending 写（P4 tie 位移后同链复用）
 }
 
 /** @internal P4 接线件（COO 派工 2026-11-21）：debug 联审毕→生成器调用钩子（COS 契约冻结面）。

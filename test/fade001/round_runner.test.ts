@@ -536,6 +536,66 @@ test('P4 六边状态机：E1 prod<=95→test / E2 test 8轮>95→debug / E5 tes
   assert.equal(flagApprovalOwner(nextFlagEdge('test', { average: 96 })!), 'COS');
 });
 
+
+function tcRec(_root: string): string {
+  return mkdtempSync(path.join(tmpdir(), 'dp014g-rd-'));
+}
+
+
+test('DP-014 守卫双修三态：本 run pending 挡 / 他 run pending 不挡 / approved 放行', async () => {
+  const mkStub = () => {
+    const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp014g-tc-'));
+    const cogDir = path.join(tcRoot, 'runtime', 'cognition');
+    mkdirSync(cogDir, { recursive: true });
+    const marker = path.join(tcRoot, 'spawned.marker');
+    const pyStub = [
+      'import os, sys',
+      `open(r"${marker}", "w").write("1")`,
+      'sys.exit(3)',
+      '',
+    ].join(String.fromCharCode(10));
+    writeFileSync(path.join(cogDir, 'loop_joint_review_spawn.py'), pyStub, 'utf8');
+    return { tcRoot, cogDir, marker };
+  };
+  const old = { cog: process.env.TRICO_COGNITION_DIR, py: process.env.FADE_PYTHON, jr: process.env.LOOP_JOINT_REVIEW };
+  process.env.FADE_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+  delete process.env.LOOP_JOINT_REVIEW;
+  try {
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    // ① 本 run pending → 守卫短路（不 spawn）
+    {
+      const { cogDir, marker } = mkStub();
+      process.env.TRICO_COGNITION_DIR = cogDir;
+      const root = mkdtempSync(path.join(tmpdir(), 'dp014g-q1-'));
+      const st = { round_count: 0, resume_stage: null, pending_charter_ref: '/x/charter.json', charter_run_id: 'r1' };
+      await runJointReviewHook(makeIo(root, runner), st as never, { runDir: tcRec(root), run_id: 'r1' } as never);
+      assert.equal(existsSync(marker), false);
+    }
+    // ② 他 run pending → 不挡（spawn 发生）
+    {
+      const { cogDir, marker } = mkStub();
+      process.env.TRICO_COGNITION_DIR = cogDir;
+      const root = mkdtempSync(path.join(tmpdir(), 'dp014g-q2-'));
+      const st = { round_count: 0, resume_stage: null, pending_charter_ref: '/x/charter.json', charter_run_id: 'r0-old' };
+      await runJointReviewHook(makeIo(root, runner), st as never, { runDir: tcRec(root), run_id: 'r2' } as never);
+      assert.equal(existsSync(marker), true);
+    }
+    // ③ approved + 本 run pending → 放行（spawn 发生）
+    {
+      const { cogDir, marker } = mkStub();
+      process.env.TRICO_COGNITION_DIR = cogDir;
+      const root = mkdtempSync(path.join(tmpdir(), 'dp014g-q3-'));
+      const st = { round_count: 0, resume_stage: null, pending_charter_ref: '/x/charter.json', charter_run_id: 'r3', charter_approval: 'APPROVED_CEO' };
+      await runJointReviewHook(makeIo(root, runner), st as never, { runDir: tcRec(root), run_id: 'r3' } as never);
+      assert.equal(existsSync(marker), true);
+    }
+  } finally {
+    if (old.cog === undefined) delete process.env.TRICO_COGNITION_DIR; else process.env.TRICO_COGNITION_DIR = old.cog;
+    if (old.py === undefined) delete process.env.FADE_PYTHON; else process.env.FADE_PYTHON = old.py;
+    if (old.jr !== undefined) process.env.LOOP_JOINT_REVIEW = old.jr;
+  }
+});
+
 test('DP-014 hook spawn env/cwd 自足：子进程 cwd=TC根·PYTHONPATH 含 TC根（stub 实读）', async () => {
   const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp014-tc-'));
   const cogDir = path.join(tcRoot, 'runtime', 'cognition');

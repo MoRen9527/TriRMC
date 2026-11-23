@@ -110,6 +110,8 @@ export interface RunnerState {
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
   // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
+  // DP-014 守卫双修（CTO 规格 2026-11-23）：pending 所属 runId（跨 run 判重锚·旧 run 残留不挡新联审）
+  charter_run_id?: string | null;
   // charter_approval 值表登记（CTO 附注 2026-11-21·防枚举漂散·照 rubric_defect 先例）：
   //   null = 未派生（无待批任务书）· 'CEO'/'COS' = 待批态（属主名·钩子写入）
   //   'APPROVED_CEO'/'APPROVED_COS' = 已批态（挂载 choreography 后更新·拾取面可见）
@@ -326,7 +328,10 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
   if (process.env.LOOP_JOINT_REVIEW === '0') return;
   const runDir = typeof params.runDir === 'string' ? params.runDir : '';
   if (!runDir) return;
-  if (st.pending_charter_ref) return;   // 幂等
+  // DP-014 守卫双修（CTO 规格·2026-11-23）：①approved 态不挡——已批/mount 后跨 run 放行新联审；
+  // ②pending 仅当属**本 run**（charter_run_id===params.run_id）才短路（幂等）——旧 run 残留 pending 不挡。
+  const _approved = st.charter_approval === 'APPROVED_CEO' || st.charter_approval === 'APPROVED_COS';
+  if (!_approved && st.pending_charter_ref && st.charter_run_id === params.run_id) return;   // 幂等（本 run）
   const cogDir = process.env.TRICO_COGNITION_DIR ?? '/srv/fleet/TriCompany/runtime/cognition';
   const script = path.join(cogDir, 'loop_joint_review_spawn.py');
   if (!existsSync(script)) { console.error('[fade001:joint-review] script missing (fail-closed): ' + script); return; }
@@ -355,7 +360,9 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
   if (!runDir) return;
   const opinionsPath = path.join(runDir, 'opinions.json');
   if (!existsSync(opinionsPath)) return;                        // 联审未产=零行为（no-op）
-  if (st.pending_charter_ref) return;                           // 幂等：已挂待批不重复
+  // DP-014 守卫双修同判形：approved 不挡·pending 属本 run 才短路
+  const _ap = st.charter_approval === 'APPROVED_CEO' || st.charter_approval === 'APPROVED_COS';
+  if (!_ap && st.pending_charter_ref && st.charter_run_id === params.run_id) return;   // 幂等：本 run 已挂待批不重复
   try {
     const mod = await import('./charter_generator.js');
     const res = mod.generateCharterFromFile(opinionsPath, { approver: 'CEO' });  // debug 链=CEO 批（CEO④ 形）
@@ -368,6 +375,7 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
     writeFileSync(charterPath, JSON.stringify(res.charter, null, 2) + '\n', 'utf8');
     st.pending_charter_ref = charterPath;
     st.charter_approval = 'CEO';
+    st.charter_run_id = (params.run_id as string | undefined) ?? null;   // DP-014：判重锚=本 run
     writeRunnerState(io, st);
   } catch (e) {
     console.error(`[fade001:charter-hook] generator unavailable（fail-closed）: ${e instanceof Error ? e.message : String(e)}`);

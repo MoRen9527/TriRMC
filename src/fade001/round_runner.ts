@@ -37,7 +37,11 @@ export type FlagState = 'debug' | 'test' | 'prod' | 'joint_review';
 
 /** P4 六边状态机（纯函数·可测·零副作用；接线面最小侵入——骨架期零行为变化）。 */
 export interface FlagSignals {
-  /** 最近一轮 aggregate average（缺=无信号·不转移） */
+  /** DP-027 ⓐ（CTO 裁 2026-11-23）：双对象均值——E1/E2/E5 判据统一双信号；
+   *  grade 源=computeJointGrade（DP-021 单一源·调用面传入·勿另算）。缺任一=无信号不转移。 */
+  avgA?: number | null;
+  avgB?: number | null;
+  /** 展示面保留（**单 side 已废止**·不作 flag 边输入——CTO DP-027） */
   average?: number | null;
   /** 自上次 flag 切换起的轮数（E2 的 8 轮判定域） */
   roundsSinceFlag?: number | null;
@@ -61,22 +65,26 @@ export interface FlagEdge {
  * 骨架期：本函数只判读不执行（runLoop 接线=log 面·flag 写面仍走 setFlag fail-closed）。
  */
 export function nextFlagEdge(current: FlagState, s: FlagSignals): FlagEdge | null {
-  const avg = s.average ?? null;
-  if (current === 'prod' && avg !== null && avg <= EXIT_GATE) {
+  // DP-027 ⓐ：双对象均值（单 side aggregate.average 已废止·不再作判据）
+  const avgA = s.avgA ?? null;
+  const avgB = s.avgB ?? null;
+  const bothLow = avgA !== null && avgB !== null && avgA <= EXIT_GATE && avgB <= EXIT_GATE;
+  const bothHigh = avgA !== null && avgB !== null && avgA > EXIT_GATE && avgB > EXIT_GATE;
+  if (current === 'prod' && bothLow) {
     return { from: 'prod', to: 'test', auto: true, edge: 'E1_prod_low',
-      reason: `prod average ${avg} <= ${EXIT_GATE} -> auto fallback to test` };
+      reason: `prod dual-avg (a=${avgA}, b=${avgB}) both <= ${EXIT_GATE} -> auto fallback to test` };
   }
-  if (current === 'test' && avg !== null && avg <= EXIT_GATE && (s.roundsSinceFlag ?? 0) >= 8) {
+  if (current === 'test' && bothLow && (s.roundsSinceFlag ?? 0) >= 8) {
     return { from: 'test', to: 'debug', auto: true, edge: 'E2_test_stuck',
-      reason: `test below/at ${EXIT_GATE} for ${s.roundsSinceFlag} rounds >= 8 -> debug (7-seat joint review)` };
+      reason: `test dual-avg both <= ${EXIT_GATE} for ${s.roundsSinceFlag} rounds >= 8 -> debug (7-seat joint review)` };
   }
   if (current === 'debug' && s.opinionsFused) {
     return { from: 'debug', to: 'test', auto: false, edge: 'E3_debug_back',
       reason: 'debug opinions fused (human-loop) -> back to test' };
   }
-  if (current === 'test' && avg !== null && avg > EXIT_GATE) {
+  if (current === 'test' && bothHigh) {
     return { from: 'test', to: 'prod', auto: true, edge: 'E5_test_high',
-      reason: `test average ${avg} > ${EXIT_GATE} -> prod (existing EXIT_GATE edge)` };
+      reason: `test dual-avg (a=${avgA}, b=${avgB}) both > ${EXIT_GATE} -> prod (existing EXIT_GATE edge)` };
   }
   return null;
 }
@@ -273,7 +281,8 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       setFlag(io, 'prod', `run:${run.run_dir}`);                 // 唯一程序自动边（EXIT2·sanctioned）
       return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, final_state: st };
     }
-    if (st.round_count >= FUSE_MAX_ROUNDS) {                     // ①8 轮 FUSE（7→8 边界=F-2 钉）
+    // DP-027 ⓑ（CTO 裁）：M9 FUSE 按态收窄——仅 test 态熔断；debug 不熔断（审批步 M4-v2 节流为界·如实注）；prod 不入 loop（起跑拦截既有）
+    if (flagVol.flag === 'test' && st.round_count >= FUSE_MAX_ROUNDS) {   // ①8 轮 FUSE（7→8 边界=F-2 钉）
       st.fuse_marker = true;
       writeRunnerState(io, st);                                  // 熔断停候 CEO（fuse.marker+pending 冻结）
       return { exit: { kind: 'fuse', detail: `FUSE 熔断（round_count=${st.round_count}>=${FUSE_MAX_ROUNDS}）候 CEO` }, rounds_run: rounds, final_state: st };

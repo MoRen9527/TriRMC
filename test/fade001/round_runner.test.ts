@@ -166,6 +166,45 @@ describe('F-2 四支路由', () => {
     assert.strictEqual(readRunnerState(makeIo(root, runner)).round_count, 0);  // 挂起零推进
     assert.strictEqual(calls.length, 1);
   });
+test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async () => {
+  // ① test 态 round>=8 → 熔断
+  seedFlag({ flag: 'test' });
+  seedState({ round_count: 8 });
+  {
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner), { params: { run_id: 'm9a' } });
+    assert.strictEqual(out.exit?.kind, 'fuse');
+    assert.strictEqual(readRunnerState(makeIo(root, runner)).fuse_marker, true);
+  }
+  // ② debug 态 round>=8 → 不熔断（审批步节流为界·终止走裁决面）
+  const root2 = mkdtempSync(path.join(tmpdir(), 'rr-m9b-'));
+  const oldRoot = root;
+  root = root2;
+  try {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:m9' });
+    seedState({ round_count: 8 });
+    seedRuling('terminate');
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner), { params: { run_id: 'm9b' } });
+    assert.notStrictEqual(out.exit?.kind, 'fuse');
+    assert.ok(!readRunnerState(makeIo(root, runner)).fuse_marker);
+  } finally {
+    root = oldRoot;
+  }
+  // ③ prod 态 → 起跑拦截（既有）
+  const root3 = mkdtempSync(path.join(tmpdir(), 'rr-m9c-'));
+  root = root3;
+  try {
+    seedFlag({ flag: 'prod' });
+    await assert.rejects(
+      runLoop(makeIo(root, makeRunner([]).runner), { params: { run_id: 'm9c' } }),
+      /prod 不入 loop/,
+    );
+  } finally {
+    root = oldRoot;
+  }
+});
+
   it('F-2e FUSE 7→8 边界钉：初值 7 第一轮推进（7→8 不熔）·第二轮毕 8>=8 熔断', async () => {
     seedState({ round_count: 7 });
     const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }]);
@@ -525,15 +564,19 @@ test('P4 接线件 hook 三态：no-op（无 opinions）/fail-closed（坏 opini
 });
 
 test('P4 六边状态机：E1 prod<=95→test / E2 test 8轮>95→debug / E5 test>95→prod / E3 debug+融合→test / 批准权 CEO|COS', () => {
-  assert.equal(nextFlagEdge('prod', { average: 90 })?.edge, 'E1_prod_low');
-  assert.equal(nextFlagEdge('prod', { average: 96 }), null);
-  assert.equal(nextFlagEdge('test', { average: 90, roundsSinceFlag: 8 })?.edge, 'E2_test_stuck');  // 8 轮持续 <=95 才 stuck
-  assert.equal(nextFlagEdge('test', { average: 90, roundsSinceFlag: 3 }), null);  // 未到 8 轮不升 debug
-  assert.equal(nextFlagEdge('test', { average: 96 })?.edge, 'E5_test_high');
+  // DP-027 ⓐ：双信号（E1/E2/E5 需 avgA+avgB 双达标；单 side=无信号）
+  assert.equal(nextFlagEdge('prod', { avgA: 90, avgB: 93 })?.edge, 'E1_prod_low');
+  assert.equal(nextFlagEdge('prod', { avgA: 90 }), null);                      // 缺 side=无信号
+  assert.equal(nextFlagEdge('prod', { average: 90 }), null);                   // 单 side aggregate.average 已废止
+  assert.equal(nextFlagEdge('prod', { avgA: 96, avgB: 97 }), null);
+  assert.equal(nextFlagEdge('test', { avgA: 90, avgB: 91, roundsSinceFlag: 8 })?.edge, 'E2_test_stuck');  // 双低 8 轮
+  assert.equal(nextFlagEdge('test', { avgA: 90, avgB: 96, roundsSinceFlag: 8 }), null);  // 单低=不 stuck（双达标）
+  assert.equal(nextFlagEdge('test', { avgA: 90, avgB: 90, roundsSinceFlag: 3 }), null);  // 未到 8 轮
+  assert.equal(nextFlagEdge('test', { avgA: 96, avgB: 97 })?.edge, 'E5_test_high');
   const e3 = nextFlagEdge('debug', { opinionsFused: true });
   assert.equal(e3?.edge, 'E3_debug_back');
   assert.equal(flagApprovalOwner(e3!), 'CEO');
-  assert.equal(flagApprovalOwner(nextFlagEdge('test', { average: 96 })!), 'COS');
+  assert.equal(flagApprovalOwner(nextFlagEdge('test', { avgA: 96, avgB: 97 })!), 'COS');
 });
 
 

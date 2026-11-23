@@ -141,6 +141,14 @@ export const STAGES: StageDef[] = [
 const ERR_TAIL = 200;
 
 /** stderr/stdout 尾行投影（D-46：段名+rc+尾行截断·零完整 dump 零密值承载） */
+/** @internal DP-20261123-012（CTO 裁形·2026-11-23）：PYTHONPATH append 而非覆盖。
+ *  spawn 面自足：cwd=TC 根 + PYTHONPATH 含 TC 根（parts 去重·跨平台 path.delimiter）。 */
+export function appendPyPath(existing: string | undefined, dir: string): string {
+  if (!existing || existing.trim() === '') return dir;
+  const parts = existing.split(path.delimiter);
+  return parts.includes(dir) ? existing : existing + path.delimiter + dir;
+}
+
 function tail(text: string): string {
   const t = text.trim();
   return t.length > ERR_TAIL ? `…${t.slice(-ERR_TAIL)}` : t;
@@ -206,7 +214,13 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
       if (!existsSync(script)) {
         return { ok: false, run_dir: runDir, aggregate: {}, err: `段 ${i + 1}(${st.name}) CLI 缺：${st.script}（TC 检出面·fail-closed）` };
       }
-      const r = spawnSync(py, [script, ...st.argv(p, runDir)], { encoding: 'utf8', timeout: st.timeoutMs ?? timeoutMs });
+      // DP-20261123-012（CTO 裁形）：spawn 面 cwd/env 自足——cwd=TC 检出根、PYTHONPATH append（非覆盖·跨平台）
+      const r = spawnSync(py, [script, ...st.argv(p, runDir)], {
+        encoding: 'utf8',
+        timeout: st.timeoutMs ?? timeoutMs,
+        cwd: paths.triCompanyRoot,
+        env: { ...process.env, PYTHONPATH: appendPyPath(process.env.PYTHONPATH, paths.triCompanyRoot) },
+      });
       stagesRun.push(st.name);
       if (r.error) {
         return { ok: false, run_dir: runDir, aggregate: {}, err: `段 ${i + 1}(${st.name}) 进程错：${r.error.message.slice(0, ERR_TAIL)}` };

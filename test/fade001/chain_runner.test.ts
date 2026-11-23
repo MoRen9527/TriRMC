@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 
-import { STAGES, makeChainRunner, SPAWN_STAGE_TIMEOUT_MS } from '../../src/fade001/chain_runner.js';
+import { STAGES, makeChainRunner, SPAWN_STAGE_TIMEOUT_MS, appendPyPath } from '../../src/fade001/chain_runner.js';
 
 const PY = process.platform === 'win32' ? 'python' : 'python3';
 
@@ -67,6 +67,14 @@ function params(runDir: string) {
 function cleanup(...dirs: string[]): void {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }
+
+test('DP-012 appendPyPath：append 非覆盖/去重/空值兜底（CTO 裁形）', () => {
+  const n = path.delimiter;
+  assert.strictEqual(appendPyPath(undefined, '/tc'), '/tc');
+  assert.strictEqual(appendPyPath('', '/tc'), '/tc');
+  assert.strictEqual(appendPyPath('/a' + n + '/b', '/tc'), '/a' + n + '/b' + n + '/tc');
+  assert.strictEqual(appendPyPath('/a' + n + '/tc', '/tc'), '/a' + n + '/tc');  // 去重
+});
 
 test('CS-1 十段硬串行全跑序：stagesRun=段表序·manifest ok→verdict=continue（首轮候意见窗）', async () => {
   const { root, runDir } = makeEnv();
@@ -141,18 +149,20 @@ test('CS-4b stdout 空=投影零段零噪音（rc≠0 面 stderr 单独承载）
   } finally { cleanup(root); }
 });
 
-test('CS-14 operating-root/start-date 双段 argv 必传断言（段 3 plan_scope+段 5 verify·绝对形 tmv-root 拼装）', () => {
+test('CS-14 段 5 verify argv 必传 operating-root/start-date（绝对形 tmv-root 拼装）+ 段 3 spawn 形 run 面 argv（v7 flip 随勘）', () => {
   const p = { runDir: 'R', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never;
   const expectRoot = path.join('T', 'docs/workflow/operating-records');
-  for (const idx of [2, 4]) {                                       // STAGES[2]=plan_scope·STAGES[4]=verify
-    const argv = STAGES[idx].argv(p, 'R');
-    const oi = argv.indexOf('--operating-root');
-    const si = argv.indexOf('--start-date');
-    assert.ok(oi !== -1, `段 ${idx + 1}(--operating-root 缺)`);
-    assert.equal(argv[oi + 1], expectRoot, `段 ${idx + 1}(operating-root 非绝对拼装形)`);
-    assert.ok(si !== -1, `段 ${idx + 1}(--start-date 缺)`);
-    assert.equal(argv[si + 1], '2026-01-05');
-  }
+  // 段 5 verify：operating-root/start-date 必传（绝对拼装形·不变）
+  const argv5 = STAGES[4].argv(p, 'R');
+  const oi = argv5.indexOf('--operating-root');
+  const si = argv5.indexOf('--start-date');
+  assert.ok(oi !== -1, '段 5(--operating-root 缺)');
+  assert.equal(argv5[oi + 1], expectRoot, '段 5(operating-root 非绝对拼装形)');
+  assert.ok(si !== -1, '段 5(--start-date 缺)');
+  assert.equal(argv5[si + 1], '2026-01-05');
+  // 段 3 spawn 形：run 面 argv（run-dir/run-id/from/to·v7 flip 后默认）
+  const argv3 = STAGES[2].argv(p, 'R');
+  assert.deepEqual(argv3, ['--run-dir', 'R', '--run-id', 'I', '--from-week', 'W1', '--to-week', 'W2']);
 });
 
 test('CS-5 dce rc=3=halt_pending_ruling 候裁态投影（关键词入 err·裁决面可判读）', async () => {
@@ -273,9 +283,9 @@ test('CS-12 段序表值面：十段名+产物名+spawn 段=score_skill（spawn 
   assert.equal(spawnSeg?.script, 'score_skill_spawn.py');
 });
 
-test('P3 灰度形：段 3/8 默认 CLI script（env 未设）·spawn 形 env FADE_PLAN_SPAWN/FADE_CLOSE_SPAWN 切（CTO 7c389cac3）', () => {
-  assert.equal(STAGES[2].script, 'plan_scope.py');   // env 未设=CLI 现役形（零行为变化）
-  assert.equal(STAGES[7].script, 'close_skill.py');
+test('P3→v7 flip：段 3/8 默认 spawn script（CEO v7 任务书·env =0 回 CLI 形=回滚锚）', () => {
+  assert.equal(STAGES[2].script, 'plan_skill_spawn.py');   // flip 后默认 spawn 形
+  assert.equal(STAGES[7].script, 'close_skill_spawn.py');
 });
 
 test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=7_200_000（7×900s+15min 余量（CTO 2026-11-21 上调））·段 7 覆写形在位·余段缺省', () => {

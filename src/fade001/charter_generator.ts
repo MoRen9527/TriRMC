@@ -72,7 +72,8 @@ export interface GenerateResult {
 }
 
 /** 五字段机械映射强制面（title 单独校验；空串视同缺失） */
-const REQUIRED_FIELDS = ['target', 'change', 'verify', 'rollback'] as const;
+// T1/R5（任务书 v2·CEO 批）：改进项**六字段**强制（五字段+owner_seat）
+const REQUIRED_FIELDS = ['target', 'change', 'verify', 'rollback', 'owner_seat'] as const;
 
 function nonEmpty(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -116,11 +117,43 @@ export function generateCharter(
       change: o.change as string,
       verify: o.verify as string,
       rollback: o.rollback as string,
-      ...(nonEmpty((o as Record<string, unknown>).owner_seat)
-        ? { owner_seat: String((o as Record<string, unknown>).owner_seat) }
-        : {}),
+      owner_seat: String((o as Record<string, unknown>).owner_seat),
     });
   }
+
+  // ── T1②（任务书 v2·R5/R16/R18）：族归并 ≤5 条/轮 + 低分维覆盖校验（两级形·D3）──
+  const itemsBefore = items.length;
+  // 去重：同 (title,target) 视为同族重复意见 → 合一件
+  const seen = new Set<string>();
+  const deduped = items.filter((it) => {
+    const k = `${it.title}|${it.target}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const dropped = deduped.slice(5).map((it) => it.title);
+  const capped = deduped.slice(0, 5);
+  // 低分维覆盖：opinions[].scores 中 <60 的维，须被任一件 target/covered_dims 覆盖
+  const lowDims: string[] = [];
+  for (const o of doc.opinions) {
+    const scores = (o as Record<string, unknown>).scores;
+    if (scores && typeof scores === 'object') {
+      for (const [dim, sc] of Object.entries(scores as Record<string, unknown>)) {
+        if (typeof sc === 'number' && sc < 60) lowDims.push(dim);
+      }
+    }
+  }
+  const coverageText = capped.map((it) => `${it.target} ${String((it as Record<string, unknown>).covered_dims ?? '')}`).join(' ');
+  const uncovered = [...new Set(lowDims)].filter((dim) => dim && !coverageText.includes(dim));
+  const coverageGate = (process.env.TRICO_COVERAGE_GATE ?? 'lenient').toLowerCase();
+  if (uncovered.length && coverageGate === 'strict') {
+    return { ok: false, rejects, reason: `低分维未覆盖：${uncovered.slice(0, 8).join(',')}（T1② strict 形）` };
+  }
+  if (uncovered.length) {
+    console.error(`[charter-generator][WARN] 低分维未覆盖（lenient 留痕）: ${uncovered.slice(0, 8).join(',')}`);
+  }
+  items.length = 0;
+  items.push(...capped);
 
   // fail-closed：任何一条不可机械映射 = 整卷退回人工（缺 target/verify/rollback 族）
   if (rejects.length > 0) {
@@ -145,6 +178,8 @@ export function generateCharter(
     approver_pending: approver,
     status: 'pending_approval',
     items,
+    // T1②：聚合计（族归并/截断留痕·供审计）
+    aggregation: { items_before: itemsBefore, items_included: capped.length, dropped },
   };
   // 红线二：auto_dispatch 仅显式授予才写·默认不置（脚本层兜死·防误扩大自动面）
   if (opts.autoDispatch === true) charter.auto_dispatch = true;

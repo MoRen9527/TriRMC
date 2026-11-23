@@ -21,6 +21,7 @@ function okOpinion(id: string) {
     verify: '验收判据·可机械复算',
     rollback: '回滚锚·基线 commit + revert 动作',
     seat: 'cto',
+    owner_seat: 'cto',   // T1/R5 六字段
   };
 }
 
@@ -116,9 +117,52 @@ describe('owner_seat（R10-CHO-01）', () => {
     assert.equal(res.ok, true);
     assert.equal((res.charter!.items[0] as { owner_seat?: string }).owner_seat, 'cto');
   });
-  it('owner_seat 缺 → 不阻断（可选字段·无透传）', () => {
-    const res = generateCharter(baseDoc([okOpinion('R10-CTO-02')]), { date: '20261123' });
+  it('owner_seat 缺 → 六字段强制后拒（T1/R5·原可选面退役）', () => {
+    const op = { ...okOpinion('R10-CTO-02') } as Record<string, unknown>;
+    delete op.owner_seat;
+    const res = generateCharter(baseDoc([op]), { date: '20261123' });
+    assert.equal(res.ok, false);
+    assert.deepEqual(res.rejects[0].missing, ['owner_seat']);
+  });
+});
+
+describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
+  it('owner_seat 缺 → 整卷退回（六字段强制）', () => {
+    const bad = { ...okOpinion('R10-X-01') } as Record<string, unknown>;
+    delete bad.owner_seat;
+    const res = generateCharter(baseDoc([okOpinion('R10-CTO-01'), bad]), { date: '20261124' });
+    assert.equal(res.ok, false);
+    assert.deepEqual(res.rejects[0].missing, ['owner_seat']);
+  });
+
+  it('族归并≤5：同 title+target 去重·超 5 截断留痕', () => {
+    const ops = [];
+    for (let i = 0; i < 6; i += 1) ops.push(okOpinion(`R10-N-0${i}`));
+    // 同 title+target 重复件（与首件同标题·模拟族内重复意见）→ 去重
+    const dup = { ...okOpinion('R10-N-00'), opinion_id: 'R10-DUP-01' };
+    const res = generateCharter(baseDoc([...ops, dup]), { date: '20261124' });   // 7 件→去重 6→截 5
     assert.equal(res.ok, true);
-    assert.equal('owner_seat' in res.charter!.items[0], false);
+    const agg = (res.charter as unknown as { aggregation: { items_included: number; dropped: string[] } }).aggregation;
+    assert.equal(res.charter!.items.length, 5);
+    assert.equal(agg.items_included, 5);
+    assert.equal(agg.dropped.length, 1);                       // 7-去重1-截5=1
+  });
+
+  it('低分维未覆盖：lenient=warn 仍生成·strict=拒', () => {
+    const doc = baseDoc([okOpinion('R10-CTO-01')]);
+    (doc.opinions[0] as Record<string, unknown>).scores = { anchor_1_dim: 40 };
+    const old = process.env.TRICO_COVERAGE_GATE;
+    try {
+      delete process.env.TRICO_COVERAGE_GATE;
+      const len = generateCharter(doc, { date: '20261124' });
+      assert.equal(len.ok, true);                              // lenient：告警可见（stderr）仍过
+      process.env.TRICO_COVERAGE_GATE = 'strict';
+      const st = generateCharter(doc, { date: '20261124' });
+      assert.equal(st.ok, false);
+      assert.match(st.reason ?? '', /低分维未覆盖/);
+    } finally {
+      if (old === undefined) delete process.env.TRICO_COVERAGE_GATE;
+      else process.env.TRICO_COVERAGE_GATE = old;
+    }
   });
 });

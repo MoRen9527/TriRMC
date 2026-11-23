@@ -170,13 +170,27 @@ export interface RoundRunnerIo {
 
 export function readFlag(io: RoundRunnerIo): FlagVolume {
   const p = path.join(io.queueRoot, 'state', 'flag.json');
-  if (!existsSync(p)) return { flag: 'test' };   // 缺省=test（直进形·D1 §二缺省面）
+  // DP-038/T4（任务书 v2·CEO 批 2026-11-24）：缺省=**debug**（M3-v2 门控起点）——
+  // 原「缺省=test 直进形」注释废（D1 §二缺省面修订）；历史 test 态语义冻结（resume9-12 不回改·文档注）
+  if (!existsSync(p)) return { flag: 'debug' };
   const vol = JSON.parse(readFileSync(p, 'utf8')) as FlagVolume;
   // P4 四态域（CTO 7c389cac3 §三）：prod/test/debug/joint_review（joint_review=debug 执行子态）
   if (vol.flag !== 'debug' && vol.flag !== 'test' && vol.flag !== 'prod' && vol.flag !== 'joint_review') {
     throw new Error(`flag.json flag 值出四态域: ${String(vol.flag)}`);
   }
   return vol;
+}
+
+/** DP-038/T4 ②：首轮 state 建立**显式写** flag.json(debug)（不依赖 readFlag 缺省直进）——
+ *  缺文件才写=迁移兼容（③旧 state/queue 无 flag→补 debug 缺省·既有 state 零改）。 */
+export function ensureFlagInit(io: RoundRunnerIo): void {
+  const p = path.join(io.queueRoot, 'state', 'flag.json');
+  if (existsSync(p)) return;
+  const dir = path.join(io.queueRoot, 'state');
+  mkdirSync(dir, { recursive: true });
+  const vol: FlagVolume = { flag: 'debug', authority_ref: 'init:default-debug (DP-038/T4)',
+                            switched_at: io.nowIso() };
+  writeFileSync(p, JSON.stringify(vol, null, 2) + String.fromCharCode(10), 'utf8');
 }
 
 /** set_flag（D1 §二：手动切换必载 authority_ref 无 ref=拒绝 fail-closed·EXIT≥95 程序边=唯一自动写面） */
@@ -243,6 +257,7 @@ export interface LoopOutcome {
  * prod 不入本循环（点火面拦截→单轮直走形·调用面守）。
  */
 export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; checks?: Record<string, unknown> }): Promise<LoopOutcome> {
+  ensureFlagInit(io);   // DP-038/T4 ②：初始化断言（首轮显式写 debug·缺省不再承担直进面）
   const flagVol = readFlag(io);
   if (flagVol.flag === 'prod') {
     throw new Error('prod 不入 loop（点火面拦截→单轮直走形·D1 §一 prod 分支）');

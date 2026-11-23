@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  runLoop, readFlag, setFlag, readRunnerState, writeRunnerState, runJointReviewHook, computeJointGrade,
+  runLoop, readFlag, setFlag, readRunnerState, writeRunnerState, runJointReviewHook, computeJointGrade, ensureFlagInit,
   nextFlagEdge, flagApprovalOwner, tryCharterHook, tryCharterMount,
   FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
@@ -99,9 +99,9 @@ describe('F-1 flag 存取权属门', () => {
     assert.strictEqual(vol.authority_ref, 'CEO令:ns9-01');
     assert.strictEqual(vol.switched_at, NOW);        // D-47：件内零推算·调用面现查原值
   });
-  it('F-1d 零文件缺省=test（直进形缺省面）', () => {
+  it('F-1d 零文件缺省=debug（DP-038/T4 缺省面修订·原 test 直进废）', () => {
     const io = makeIo(root, makeRunner([]).runner);
-    assert.deepStrictEqual(readFlag(io), { flag: 'test' });
+    assert.deepStrictEqual(readFlag(io), { flag: 'debug' });
   });
   it('F-1e flag 值出四态域=throw（域校验 fail-closed·P4 四态扩展）', () => {
     seedFlag({ flag: 'staging' as unknown as FlagVolume['flag'] });
@@ -114,6 +114,7 @@ describe('F-1 flag 存取权属门', () => {
 
 describe('F-2 四支路由', () => {
   it('F-2a test 支=直进迭代（不候裁决）·round_count 逐轮落卷', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：缺省改 debug 后本支须显式 test 态
     const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }, { verdict: 'loop_exit' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'a1' } });
     assert.strictEqual(out.exit?.kind, 'prod');
@@ -211,6 +212,7 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
 });
 
   it('F-2e FUSE 7→8 边界钉：初值 7 第一轮推进（7→8 不熔）·第二轮毕 8>=8 熔断', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态
     seedState({ round_count: 7 });
     const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'e1' } });
@@ -222,6 +224,7 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
     assert.strictEqual(out.rounds_run, 1);           // 轮 1 完成（rounds 0→1）·轮 2 毕 fuse return 不计
   });
   it('F-2e2 FUSE 即熔：初值 8 第一轮毕即熔', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态
     seedState({ round_count: 8 });
     const { runner, calls } = makeRunner([{ verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'e2' } });
@@ -241,6 +244,34 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
 
 // ── F-3 程序自动边唯一性（EXIT≥95→prod 唯一 sanctioned 边） ─────────────
 
+
+
+test('DP-038/T4 ①缺省=debug：无 flag.json → readFlag=debug（不再 test 直进）', () => {
+  const io = makeIo(root, makeRunner([]).runner);
+  assert.equal(readFlag(io).flag, 'debug');
+});
+
+test('DP-038/T4 ②初始化断言：ensureFlagInit 首轮显式写 debug·既有不覆', () => {
+  const io = makeIo(root, makeRunner([]).runner);
+  ensureFlagInit(io);
+  const fp = path.join(root, 'state', 'flag.json');
+  const vol = JSON.parse(readFileSync(fp, 'utf8'));
+  assert.equal(vol.flag, 'debug');
+  assert.match(String(vol.authority_ref), /DP-038/);
+  seedFlag({ flag: 'test', authority_ref: 'CEO令:keep' });
+  ensureFlagInit(io);
+  assert.equal(JSON.parse(readFileSync(fp, 'utf8')).flag, 'test');
+});
+
+test('DP-038/T4 ③迁移兼容：旧 state 无 flag → 补 debug·state 不破', async () => {
+  seedState({ round_count: 3 });
+  seedRuling('terminate', 'migrate-t4');
+  const { runner } = makeRunner([{ verdict: 'continue' }]);
+  await runLoop(makeIo(root, runner), { params: { run_id: 'migrate-t4' } });
+  const vol = JSON.parse(readFileSync(path.join(root, 'state', 'flag.json'), 'utf8'));
+  assert.equal(vol.flag, 'debug');
+  assert.equal(readRunnerState(makeIo(root, runner)).round_count, 3);
+});
 
 describe('DP-030 ceo-ruling 三绑与一纸一轮', () => {
   it('旧件（无 run_id/round_count/signed_at）→absent 不认', async () => {
@@ -278,6 +309,7 @@ describe('DP-030 ceo-ruling 三绑与一纸一轮', () => {
 });
 describe('F-3 程序自动边唯一性', () => {
   it('F-3a 非 EXIT 轮零程序写 flag 面·EXIT 轮=唯一写面', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态（缺省改 debug）
     const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit', run_dir: 'rd-u1' }]);
     const io = makeIo(root, runner);
     await runLoop(io, { params: { run_id: 'u0' } });   // 全程跑毕收束
@@ -311,6 +343,7 @@ describe('F-4 prod 直走形', () => {
 
 describe('R resume 续跑边', () => {
   it('R-1 resume_stage=7→每轮 chainRunner 收 resumeStage=7（恒定传递照铸形）', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态
     seedState({ resume_stage: 7 });
     const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
     await runLoop(makeIo(root, runner), { params: { run_id: 'r1' } });
@@ -356,6 +389,7 @@ describe('IO 点火/裁决面', () => {
     assert.strictEqual(calls[0].params.week, 'W47');
   });
   it('IO-2 自主迭代推进=nextRoundParams（round+1·round_count 随轮·非队列接力）', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态
     const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
     await runLoop(makeIo(root, runner), { params: { run_id: 'io2' } });   // round 缺省→0+1=1
     assert.strictEqual(calls[1].params.round, 1);
@@ -412,6 +446,7 @@ describe('FR first_round_pending 停点消费', () => {
     assert.strictEqual(calls.length, 1);                          // 首轮毕即停·零二次迭代
   });
   it('FR-2 released+ref 在→放行续轮（放行一次非逐轮·第二轮零复查）', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态（缺省改 debug）
     const probe = (): ActivationVerdict => gateReady({ first_round_pending: { state: 'released', authority_ref: 'CEO令:fr2' } });
     const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
     const out = await runLoop(makeIo(root, runner, probe), { params: { run_id: 'fr2' } });
@@ -477,6 +512,7 @@ describe('GW gate 喂入接线（A1-A4 采集位=调用面·runner 只透传零�
     assert.deepStrictEqual(seen, {});
   });
   it('GW-3 probe 全程只调一次（起跑前置位·非逐轮）', async () => {
+    seedFlag({ flag: 'test' });   // DP-038：显式 test 态
     let n = 0;
     const probe = (): ActivationVerdict => { n += 1; return gateReady(); };
     const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);

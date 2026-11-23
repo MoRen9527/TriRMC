@@ -43,6 +43,7 @@ export interface ChainParams {
   toWeek: string;
   startDate: string;       // 新周起始日 YYYY-MM-DD（preflight required·dce 透传）
   tmvRoot: string;         // TriMetaverse 工作区根（dce required）
+  queueRoot?: string;      // DP-038/T4：flag 门断言读面（preflight --queue-root）
 }
 
 export interface ChainRunnerPaths {
@@ -83,7 +84,8 @@ export const STAGES: StageDef[] = [
     // DP-030：传 run-dir 供 preflight prev 解析显式排除自身（argv 与 parser 同 commit 原子落）
     // DP-031 ②：点火形显式传 --prev-runs-root（run-dir 父=轮仓根·防根缺静默 skip 蒸发门面）
     argv: (p) => ['--from', p.fromWeek, '--to', p.toWeek, '--start-date', p.startDate,
-      '--run-dir', p.runDir, '--prev-runs-root', path.dirname(p.runDir)],
+      '--run-dir', p.runDir, '--prev-runs-root', path.dirname(p.runDir),
+      '--queue-root', p.queueRoot ?? ''],
   },
   {
     name: 'qualify', script: 'qualify.py', output: 'qualify.json', redirect: true,

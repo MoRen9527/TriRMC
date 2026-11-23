@@ -90,7 +90,7 @@ async function main(): Promise<void> {
     params: {
       run_id: a.runId,
       runDir: a.runDir, runId: a.runId, fromWeek: a.fromWeek, toWeek: a.toWeek,
-      startDate: a.startDate, tmvRoot: a.tmvRoot, round: 0,
+      startDate: a.startDate, tmvRoot: a.tmvRoot, queueRoot: a.queueRoot, round: 0,   // DP-038/T4：flag 门读面
     },
     checks,
   });

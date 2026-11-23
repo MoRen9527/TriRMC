@@ -87,6 +87,10 @@ test('DP-032 R 形：push marker ref → bare 可见 running·消息含 runId·d
   const info = chainRefInfo(bare);
   assert.equal(info.state, 'running');
   assert.ok(String(info.raw).includes('r-ref-1'));
+  // SDE ③ 回归防线：marker commit 必为启动时点新建（committer date ≈ now·防旧 HEAD 误判 stale）
+  const ct = Number(execFileSync('git', ['--git-dir', bare, 'log', '-1', '--format=%ct', CHAIN_MARKER_REF],
+    { encoding: 'utf8' }).trim());
+  assert.ok(Math.abs(Date.now() / 1000 - ct) < 120, `committer date 非新鲜: ${ct}`);
   assert.equal(clearChainMarkerRef(repo), true);
   assert.equal(chainRefInfo(bare).state, 'absent');
   assert.equal(execFileSync('git', ['for-each-ref', CHAIN_MARKER_REF], { cwd: bare, encoding: 'utf8' }).trim(), '');

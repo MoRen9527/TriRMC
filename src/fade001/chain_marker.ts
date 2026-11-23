@@ -2,11 +2,15 @@
 // 链面小改：ignite 启动写 `.running`{pid,runId,start_at}·进程退出删除；
 // 闸端（pre-receive bare 面·SDE）=存在即拒 dev 业务码推送；**stale>2h 保护**：
 // mtime 超 2h 视为崩溃残迹→闸端放行+告警（isChainRunning 返回 stale 标记）。
-// 位置：env TRI_CHAIN_MARKER 覆写；缺省 `/srv/git/TriCompany.git/chain-running.marker`
-// （R-HY 本机 bare 与 runs 同文件系统·fleet 可写）。
+// 位置：env TRI_CHAIN_MARKER 覆写；**缺省=R-HY 本机 `/srv/fleet/TriRMC/chain-running.marker`**
+// （CTO 修 A 2026-11-23·机位勘正：TriCompany bare 真位=**sg**（/srv/git/TriCompany.git）·
+//  R-HY 无 /srv/git——旧缺省「R-HY 本机 bare」系机位错位假设，已勘）。
+// ⚠ 跨机可见性缺口（如实）：sg 侧 pre-receive 读的是 **sg 本机**同名路径·R-HY 写的文件
+// 跨机不可见（两机独立·sg /srv/fleet/TriRMC=独立 duty 副本）——闸端真正跨机信号候
+// ref 形（chain 推/删 `refs/runtime/chain-running` 于 sg bare·hook for-each-ref）CTO 裁。
 import { existsSync, readFileSync, unlinkSync, writeFileSync, statSync } from 'node:fs';
 
-export const CHAIN_MARKER_DEFAULT = '/srv/git/TriCompany.git/chain-running.marker';
+export const CHAIN_MARKER_DEFAULT = '/srv/fleet/TriRMC/chain-running.marker';   // CTO 修 A（R-HY 实位·机位勘正）
 export const CHAIN_MARKER_STALE_MS = 2 * 60 * 60 * 1000;   // >2h = stale 保护窗
 
 export function markerPath(): string {

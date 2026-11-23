@@ -25,6 +25,7 @@ export const CHARTER_SCHEMA_VERSION = '1.0.0';
 export interface OpinionEntry {
   opinion_id: string;
   title: string;
+  owner_seat?: string;   // R10-CHO-01（CEO 批讫）：improvements owner_seat 枚举席位面（可选·有则校验非空透传）
   target?: string | null;
   change?: string | null;
   verify?: string | null;
@@ -115,6 +116,9 @@ export function generateCharter(
       change: o.change as string,
       verify: o.verify as string,
       rollback: o.rollback as string,
+      ...(nonEmpty((o as Record<string, unknown>).owner_seat)
+        ? { owner_seat: String((o as Record<string, unknown>).owner_seat) }
+        : {}),
     });
   }
 

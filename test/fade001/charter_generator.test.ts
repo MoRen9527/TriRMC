@@ -108,3 +108,17 @@ describe('charter_generator', () => {
     assert.equal(res.charter!.charter_id, 'rN-task-20261121');
   });
 });
+
+describe('owner_seat（R10-CHO-01）', () => {
+  it('owner_seat 非空 → 透传至 charter item', () => {
+    const op = { ...okOpinion('R10-CTO-01'), owner_seat: 'cto' };
+    const res = generateCharter(baseDoc([op]), { date: '20261123' });
+    assert.equal(res.ok, true);
+    assert.equal((res.charter!.items[0] as { owner_seat?: string }).owner_seat, 'cto');
+  });
+  it('owner_seat 缺 → 不阻断（可选字段·无透传）', () => {
+    const res = generateCharter(baseDoc([okOpinion('R10-CTO-02')]), { date: '20261123' });
+    assert.equal(res.ok, true);
+    assert.equal('owner_seat' in res.charter!.items[0], false);
+  });
+});

@@ -118,6 +118,26 @@ describe('F-2 四支路由', () => {
     assert.strictEqual(readRunnerState(makeIo(root, runner)).round_count, 2);  // EXIT 轮 count 零增（判序在增前）
     assert.strictEqual(calls.length, 3);           // 发起链跑 3 次·完成迭代 2 轮
   });
+  it('DP-009 #16 runId 贯穿轮层：链层 params.run_id→runner-state.run_id', async () => {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+    seedRuling('continue');
+    const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
+    await runLoop(makeIo(root, runner), { params: { run_id: 'DP-009-rr-1' } });
+    const st = readRunnerState(makeIo(root, runner));
+    assert.strictEqual(st.run_id, 'DP-009-rr-1');   // 轮态持久化（恢复锚/回执归属锚）
+  });
+  it('DP-009 老 state 无 run_id 字段→宽容读+入口补写', async () => {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+    seedRuling('continue');
+    // 老态：file 里无 run_id 键（#16 前形）
+    writeFileSync(path.join(root, 'state', 'runner-state.json'),
+      JSON.stringify({ round_count: 3, resume_stage: null }, null, 2), 'utf8');
+    const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
+    await runLoop(makeIo(root, runner), { params: { run_id: 'DP-009-rr-2' } });
+    const st = readRunnerState(makeIo(root, runner));
+    assert.strictEqual(st.run_id, 'DP-009-rr-2');   // 老态补写
+    assert.strictEqual(st.round_count, 4);          // 既有行为不破（3+1 轮·EXIT 轮零增）
+  });
   it('F-2b debug 支 ruling=continue→续轮迭代', async () => {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
     seedRuling('continue');
@@ -431,7 +451,8 @@ describe('GD 护栏随铸（D-46/D-47 白盒）', () => {
     // 停面零写卷（final_state 只在 outcome 返回面·零文件=零密值落盘正形——照铸形）
     assert.strictEqual(existsSync(path.join(root, 'state', 'runner-state.json')), false);
     const keys = Object.keys(out.final_state);
-    assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker'].includes(k)));  // 白名单域外零承载
+    // DP-009 #16：run_id 入白名单（非密值·派工锚·CTO e9fb4dddc §二关联行）——余键仍零承载
+    assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker', 'run_id'].includes(k)));  // 白名单域外零承载
     assert.strictEqual('brief' in out.final_state, false);        // 呈报载荷走 exit detail 投影面零入 state
   });
 });

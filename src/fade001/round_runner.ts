@@ -100,6 +100,9 @@ export interface FlagVolume {
 /** runner 状态卷面（round-queue/state/runner-state.json） */
 export interface RunnerState {
   round_count: number;                     // FUSE 计数域（D1 §四：同根缺陷连续+1·test/prod 两计数不混——本域=sprint 轮计数）
+  // ── #16 / DP-20261123-009 runId 贯穿 round 层（CTO 技术形卷 e9fb4dddc §三.1·2026-11-23）──
+  // runId 根=COS 签发（launcher 外部注入式）·链层已有·本字段补轮层持久化（恢复锚/回执归属/trend 关联）。
+  run_id?: string | null;
   fuse_marker?: boolean;                   // 熔断停候 CEO（fuse.marker+pending 冻结）
   resume_stage?: number | null;            // 续跑边（pending-retry 轮→下轮 resumeStage=7）
   // ── P4 状态机载体扩展（CTO 7c389cac3 §三·状态载体=runner-state 扩展）──
@@ -177,7 +180,7 @@ export function setFlag(io: RoundRunnerIo, flag: FlagState, authorityRef: string
 
 export function readRunnerState(io: RoundRunnerIo): RunnerState {
   const p = path.join(io.queueRoot, 'state', 'runner-state.json');
-  if (!existsSync(p)) return { round_count: 0, resume_stage: null };
+  if (!existsSync(p)) return { round_count: 0, resume_stage: null, run_id: null };
   return JSON.parse(readFileSync(p, 'utf8')) as RunnerState;
 }
 
@@ -235,6 +238,8 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
   const st = readRunnerState(io);
   let rounds = 0;
   let params = ignite.params;
+  // #16（DP-009·CTO e9fb4dddc）：链层 runId 注入轮态（老 state 无此字段=宽容补写·随既有 writeRunnerState 落盘）
+  st.run_id = (params.run_id as string | undefined) ?? null;
 
   // 起跑前置检查位（D6 gate 接线·gate=ready 方可入轮——D7 验证段四锚承录）
   // A1-A4 状态采集喂入：采集位=调用面（值席起跑前采集）·runner 只透传零判读（勘面卷 §三.4 承）

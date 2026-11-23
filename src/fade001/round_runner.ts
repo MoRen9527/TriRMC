@@ -249,6 +249,8 @@ export interface LoopOutcome {
   exit: LoopExitReason | null;             // null=非终出局（保留扩展）
   rounds_run: number;
   final_state: RunnerState;
+  /** DP-037/T5（任务书 v2）：已尝试轮数（含未完成即失败的当前轮）——上报面区分 rounds_run */
+  rounds_started: number;
 }
 
 /**
@@ -264,6 +266,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
   }
   const st = readRunnerState(io);
   let rounds = 0;
+  let roundsStarted = 0;   // DP-037/T5：尝试轮计数（轮首+1·失败轮计入·上报面）
   let params = ignite.params;
   // #16（DP-009·CTO e9fb4dddc）：链层 runId 注入轮态（老 state 无此字段=宽容补写·随既有 writeRunnerState 落盘）
   st.run_id = (params.run_id as string | undefined) ?? null;
@@ -287,22 +290,23 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
   const resumeStage = st.resume_stage ?? null;
 
   for (;;) { // while True（D1 §一）
+    roundsStarted += 1;   // DP-037/T5：每轮尝试即计
     const run = await io.chainRunner.run(params, resumeStage);   // 十段链+Skill 段程序化 spawn（节 4 接装）
     if (!run.ok) {                                               // 款三纪律：段报错停 fail-closed
-      return { exit: { kind: 'failed', detail: `run failed: ${run.err ?? 'unknown'}` }, rounds_run: rounds, final_state: st };
+      return { exit: { kind: 'failed', detail: `run failed: ${run.err ?? 'unknown'}` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
     }
     const verdict = run.aggregate.verdict;
     // ── v7 轮末钩（CTO ce26401a9·loop 层）：十段全毕 → 七席联审（两对象）→opinions→生成器→pending ──
     await runJointReviewHook(io, st, params);
     if (verdict === 'loop_exit') {                               // 联审均分≥95（≥95 含边界）
       setFlag(io, 'prod', `run:${run.run_dir}`);                 // 唯一程序自动边（EXIT2·sanctioned）
-      return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, final_state: st };
+      return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
     }
     // DP-027 ⓑ（CTO 裁）：M9 FUSE 按态收窄——仅 test 态熔断；debug 不熔断（审批步 M4-v2 节流为界·如实注）；prod 不入 loop（起跑拦截既有）
     if (flagVol.flag === 'test' && st.round_count >= FUSE_MAX_ROUNDS) {   // ①8 轮 FUSE（7→8 边界=F-2 钉）
       st.fuse_marker = true;
       writeRunnerState(io, st);                                  // 熔断停候 CEO（fuse.marker+pending 冻结）
-      return { exit: { kind: 'fuse', detail: `FUSE 熔断（round_count=${st.round_count}>=${FUSE_MAX_ROUNDS}）候 CEO` }, rounds_run: rounds, final_state: st };
+      return { exit: { kind: 'fuse', detail: `FUSE 熔断（round_count=${st.round_count}>=${FUSE_MAX_ROUNDS}）候 CEO` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
     }
     // 首轮毕知情停点消费（勘面卷 §三.4 执行面：停面+呈报+候令 loop 体域随铸·preflight 节 3）
     // 放行令=令面非时面：authority_ref 在=released·无 ref=拒绝 fail-closed——放行一次非逐轮（gateVerdict 仅首轮毕查）
@@ -327,10 +331,10 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       // P4 tie 位移（CTO ce26401a9 v7）：生成器链上移轮末钩（runJointReviewHook 内），本块仅裁决事件。
       const ruling = await awaitCeoRuling(io, st, params);                   // continue/terminate/absent 三态
       if (ruling === 'terminate') {
-        return { exit: { kind: 'failed', detail: 'CEO ruling=terminate' }, rounds_run: rounds, final_state: st };
+        return { exit: { kind: 'failed', detail: 'CEO ruling=terminate' }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
       }
       if (ruling === 'absent') {
-        return { exit: null, rounds_run: rounds, final_state: st }; // 挂起（不迭代·fail-closed·候裁决投递）
+        return { exit: null, rounds_run: rounds, rounds_started: roundsStarted, final_state: st }; // 挂起（不迭代·fail-closed·候裁决投递）
       }
       // continue=批准 → 挂载 choreography（CTO 裁：批准后挂树·发布行为·拾取面可见）
       await tryCharterMount(io, st, params);

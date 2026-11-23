@@ -99,6 +99,7 @@ async function main(): Promise<void> {
   process.stdout.write(JSON.stringify({
     exit: outcome.exit,
     rounds_run: outcome.rounds_run,
+    rounds_started: outcome.rounds_started,   // DP-037/T5：尝试轮计数（失败轮可见）
     final_state: outcome.final_state,
     stages_run: chain.stagesRun,
   }, null, 2) + '\n');

@@ -246,6 +246,26 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
 
 
 
+
+test('DP-037/T5 rounds_started 上报面：链中fail轮计入尝试数（rounds_run=0 但 started=1）', async () => {
+  seedState({ round_count: 4 });
+  const { runner } = makeRunner([{ ok: false }]);
+  const out = await runLoop(makeIo(root, runner), { params: { run_id: 't5a' } });
+  assert.strictEqual(out.exit?.kind, 'failed');
+  assert.strictEqual(out.rounds_run, 0);
+  assert.strictEqual(out.rounds_started, 1);       // 尝试轮可见（DP-037）
+});
+
+test('DP-037/T5 fuse 即熔：rounds_started 亦计入（attempted=1）', async () => {
+  seedFlag({ flag: 'test' });
+  seedState({ round_count: 8 });
+  const { runner } = makeRunner([{ verdict: 'continue' }]);
+  const out = await runLoop(makeIo(root, runner), { params: { run_id: 't5b' } });
+  assert.strictEqual(out.exit?.kind, 'fuse');
+  assert.strictEqual(out.rounds_run, 0);
+  assert.strictEqual(out.rounds_started, 1);
+});
+
 test('DP-038/T4 ①缺省=debug：无 flag.json → readFlag=debug（不再 test 直进）', () => {
   const io = makeIo(root, makeRunner([]).runner);
   assert.equal(readFlag(io).flag, 'debug');

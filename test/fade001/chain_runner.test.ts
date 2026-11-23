@@ -165,6 +165,16 @@ test('CS-14 段 5 verify argv 必传 operating-root/start-date（绝对形 tmv-r
   assert.deepEqual(argv3, ['--run-dir', 'R', '--run-id', 'I', '--from-week', 'W1', '--to-week', 'W2', '--stage-budget', '480', '--tmv-root', 'T']);   // DP-020 c + DP-018 增强器读面
 });
 
+test('DP-031 ② preflight argv 显式 --prev-runs-root（=runDir 父）', () => {
+  const p = { runDir: '/runs/some-run', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05' } as never;
+  const argv = STAGES[0].argv(p, '/runs/some-run');
+  const i = argv.indexOf('--prev-runs-root');
+  assert.ok(i !== -1, '--prev-runs-root 缺');
+  assert.equal(argv[i + 1], '/runs');
+  const rd = argv.indexOf('--run-dir');
+  assert.equal(argv[rd + 1], '/runs/some-run');
+});
+
 test('CS-5 dce rc=3=halt_pending_ruling 候裁态投影（关键词入 err·裁决面可判读）', async () => {
   const { root, runDir } = makeEnv();
   try {

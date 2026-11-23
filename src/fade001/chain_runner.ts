@@ -81,7 +81,9 @@ export const STAGES: StageDef[] = [
   {
     name: 'preflight', script: 'preflight.py', output: 'preflight.json', redirect: true,
     // DP-030：传 run-dir 供 preflight prev 解析显式排除自身（argv 与 parser 同 commit 原子落）
-    argv: (p) => ['--from', p.fromWeek, '--to', p.toWeek, '--start-date', p.startDate, '--run-dir', p.runDir],
+    // DP-031 ②：点火形显式传 --prev-runs-root（run-dir 父=轮仓根·防根缺静默 skip 蒸发门面）
+    argv: (p) => ['--from', p.fromWeek, '--to', p.toWeek, '--start-date', p.startDate,
+      '--run-dir', p.runDir, '--prev-runs-root', path.dirname(p.runDir)],
   },
   {
     name: 'qualify', script: 'qualify.py', output: 'qualify.json', redirect: true,

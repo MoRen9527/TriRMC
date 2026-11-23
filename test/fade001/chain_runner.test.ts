@@ -162,7 +162,7 @@ test('CS-14 段 5 verify argv 必传 operating-root/start-date（绝对形 tmv-r
   assert.equal(argv5[si + 1], '2026-01-05');
   // 段 3 spawn 形：run 面 argv（run-dir/run-id/from/to·v7 flip 后默认）
   const argv3 = STAGES[2].argv(p, 'R');
-  assert.deepEqual(argv3, ['--run-dir', 'R', '--run-id', 'I', '--from-week', 'W1', '--to-week', 'W2', '--stage-budget', '300']);   // DP-020 追补 c
+  assert.deepEqual(argv3, ['--run-dir', 'R', '--run-id', 'I', '--from-week', 'W1', '--to-week', 'W2', '--stage-budget', '480', '--tmv-root', 'T']);   // DP-020 c + DP-018 增强器读面
 });
 
 test('CS-5 dce rc=3=halt_pending_ruling 候裁态投影（关键词入 err·裁决面可判读）', async () => {
@@ -295,5 +295,5 @@ test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=7_200_000（7×900
   const overridden = STAGES.filter((s) => s.timeoutMs !== undefined);
   // DP-20261123-019：段 3 超时预算覆写（300s 快失败）+段 7 spawn 窗——两段覆写
   assert.deepEqual(overridden.map((s) => s.name), ['plan_scope', 'score_skill']);
-  assert.equal(STAGES.find((s) => s.name === 'plan_scope')?.timeoutMs, 300_000);   // 段 3=300s 快失败
+  assert.equal(STAGES.find((s) => s.name === 'plan_scope')?.timeoutMs, 480_000);   // 段 3=480s（COO 16:43 三调）
 });

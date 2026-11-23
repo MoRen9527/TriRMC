@@ -96,7 +96,8 @@ export const STAGES: StageDef[] = [
     // --start-date（周目录年段推算第一候选分支入参·零传=fallthrough 面）
     // spawn 形（P3 灰度）：单席 cos 产出 plan.json·argv 仅 run 面（schema 校验在脚本内 fail-closed）
     argv: PLAN_SPAWN
-      ? (p) => ['--run-dir', p.runDir, '--run-id', p.runId, '--from-week', p.fromWeek, '--to-week', p.toWeek]
+      // DP-020 追补 c：传段预算（300s）——脚本内子 spawn 超时=min(spawn_timeout, 段剩余)
+      ? (p) => ['--run-dir', p.runDir, '--run-id', p.runId, '--from-week', p.fromWeek, '--to-week', p.toWeek, '--stage-budget', '300']
       : (p) => ['--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
         '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'), '--start-date', p.startDate],
   },

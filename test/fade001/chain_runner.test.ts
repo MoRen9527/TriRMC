@@ -162,7 +162,7 @@ test('CS-14 段 5 verify argv 必传 operating-root/start-date（绝对形 tmv-r
   assert.equal(argv5[si + 1], '2026-01-05');
   // 段 3 spawn 形：run 面 argv（run-dir/run-id/from/to·v7 flip 后默认）
   const argv3 = STAGES[2].argv(p, 'R');
-  assert.deepEqual(argv3, ['--run-dir', 'R', '--run-id', 'I', '--from-week', 'W1', '--to-week', 'W2']);
+  assert.deepEqual(argv3, ['--run-dir', 'R', '--run-id', 'I', '--from-week', 'W1', '--to-week', 'W2', '--stage-budget', '300']);   // DP-020 追补 c
 });
 
 test('CS-5 dce rc=3=halt_pending_ruling 候裁态投影（关键词入 err·裁决面可判读）', async () => {

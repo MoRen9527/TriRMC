@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  runLoop, readFlag, setFlag, readRunnerState, writeRunnerState, runJointReviewHook,
+  runLoop, readFlag, setFlag, readRunnerState, writeRunnerState, runJointReviewHook, computeJointGrade,
   nextFlagEdge, flagApprovalOwner, tryCharterHook, tryCharterMount,
   FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
@@ -541,6 +541,83 @@ function tcRec(_root: string): string {
   return mkdtempSync(path.join(tmpdir(), 'dp014g-rd-'));
 }
 
+
+
+test('DP-021 grade 单源：computeJointGrade 门槛 A>90 && B>90（边界 90=不达）', () => {
+  const pass = computeJointGrade({ seat_means: { a: 91, b: 92 } });
+  assert.deepEqual(pass, { a: 91, b: 92, bothPass: true });
+  const boundary = computeJointGrade({ seat_means: { a: 90, b: 95 } });
+  assert.equal(boundary.bothPass, false);
+  const fromFaces = computeJointGrade({ faces: {
+    s1: { dimensions: [{ object: 'a', score: 95 }, { object: 'b', score: 96 }] },
+    s2: { dimensions: [{ object: 'a', score: 97 }, { object: 'b', score: 94 }] },
+  } });
+  assert.equal(fromFaces.bothPass, true);
+  assert.equal(fromFaces.a, 96);
+  assert.equal(fromFaces.b, 95);
+});
+
+test('DP-021 达标轮：charter skip 留痕（charter-skip.json·pending 零写）', async () => {
+  const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp021-tc-'));
+  const cogDir = path.join(tcRoot, 'runtime', 'cognition');
+  mkdirSync(cogDir, { recursive: true });
+  const rd = mkdtempSync(path.join(tmpdir(), 'dp021-rd-'));
+  // stub 联审脚本：rc=0 且写 joint-review.json（both pass）
+  const pyStub = [
+    'import json, sys, os',
+    `open(r"${path.join(rd, 'joint-review.json')}", "w").write(json.dumps({"seat_means": {"a": 95.0, "b": 96.0}}))`,
+    'sys.exit(0)',
+    '',
+  ].join(String.fromCharCode(10));
+  writeFileSync(path.join(cogDir, 'loop_joint_review_spawn.py'), pyStub, 'utf8');
+  const root = mkdtempSync(path.join(tmpdir(), 'dp021-q-'));
+  const oldEnv = { cog: process.env.TRICO_COGNITION_DIR, py: process.env.FADE_PYTHON, jr: process.env.LOOP_JOINT_REVIEW };
+  process.env.TRICO_COGNITION_DIR = cogDir;
+  process.env.FADE_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+  delete process.env.LOOP_JOINT_REVIEW;
+  try {
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const st: RunnerState = { round_count: 0, resume_stage: null };
+    const res = await runJointReviewHook(makeIo(root, runner), st, { runDir: rd, run_id: 'dp021' } as never) as { charter: string };
+    assert.equal(res.charter, 'skipped');
+    assert.equal(st.pending_charter_ref, undefined);                       // pending 零写
+    assert.equal(existsSync(path.join(rd, 'charter-skip.json')), true);    // 留痕
+  } finally {
+    if (oldEnv.cog === undefined) delete process.env.TRICO_COGNITION_DIR; else process.env.TRICO_COGNITION_DIR = oldEnv.cog;
+    if (oldEnv.py === undefined) delete process.env.FADE_PYTHON; else process.env.FADE_PYTHON = oldEnv.py;
+    if (oldEnv.jr !== undefined) process.env.LOOP_JOINT_REVIEW = oldEnv.jr;
+  }
+});
+
+test('DP-021 未达标轮：走 charter 生成链（attempted 且无 skip 文件）', async () => {
+  const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp021b-tc-'));
+  const cogDir = path.join(tcRoot, 'runtime', 'cognition');
+  mkdirSync(cogDir, { recursive: true });
+  const rd = mkdtempSync(path.join(tmpdir(), 'dp021b-rd-'));
+  const pyStub = [
+    'import json, sys',
+    `open(r"${path.join(rd, 'joint-review.json')}", "w").write(json.dumps({"seat_means": {"a": 50.0, "b": 60.0}}))`,
+    'sys.exit(0)',
+    '',
+  ].join(String.fromCharCode(10));
+  writeFileSync(path.join(cogDir, 'loop_joint_review_spawn.py'), pyStub, 'utf8');
+  const root = mkdtempSync(path.join(tmpdir(), 'dp021b-q-'));
+  const oldEnv = { cog: process.env.TRICO_COGNITION_DIR, py: process.env.FADE_PYTHON, jr: process.env.LOOP_JOINT_REVIEW };
+  process.env.TRICO_COGNITION_DIR = cogDir;
+  process.env.FADE_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+  delete process.env.LOOP_JOINT_REVIEW;
+  try {
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const st: RunnerState = { round_count: 0, resume_stage: null };
+    const res = await runJointReviewHook(makeIo(root, runner), st, { runDir: rd, run_id: 'dp021b' } as never) as { charter: string };
+    assert.equal(res.charter, 'attempted');
+    assert.equal(existsSync(path.join(rd, 'charter-skip.json')), false);
+  } finally {
+    if (oldEnv.cog === undefined) delete process.env.TRICO_COGNITION_DIR; else process.env.TRICO_COGNITION_DIR = oldEnv.cog;
+    if (oldEnv.py === undefined) delete process.env.FADE_PYTHON; else process.env.FADE_PYTHON = oldEnv.py;
+    if (oldEnv.jr !== undefined) process.env.LOOP_JOINT_REVIEW = oldEnv.jr;
+  }
+});
 
 test('DP-014 守卫双修三态：本 run pending 挡 / 他 run pending 不挡 / approved 放行', async () => {
   const mkStub = () => {

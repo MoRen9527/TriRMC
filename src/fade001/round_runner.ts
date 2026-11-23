@@ -324,7 +324,34 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
  *  十段全毕（run.ok）后发起七席联审（两对象×各席≥3 部门维度）→opinions.json（schema 2.0.0·
  *  improvements 五字段）→ 生成器 → 任务书 → pending_charter_ref 写（与 P4 钩子同链）。
  *  env LOOP_JOINT_REVIEW=0 可关（回滚锚）；fail-closed：联审败=state 不动+stderr 留痕；幂等：已有待批不重复。 */
-export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<void> {
+/** DP-20261123-021（CTO 规格·CEO 令准）：联审 grade 判定（单一源）——
+ *  A/B = mean-of-seat-means（优先取 joint-review.seat_means·缺则由 faces 现算，聚合口径不变）；
+ *  门槛：debug 态 A>90 且 B>90 = bothPass（达标轮不生成 charter）。 */
+export interface JointGrade { a: number | null; b: number | null; bothPass: boolean; }
+export const JOINT_GRADE_THRESHOLD = 90;
+
+export function computeJointGrade(jr: unknown): JointGrade {
+  const doc = (jr ?? {}) as { seat_means?: { a?: number | null; b?: number | null }; faces?: Record<string, unknown> };
+  let a: number | null = doc.seat_means?.a ?? null;
+  let b: number | null = doc.seat_means?.b ?? null;
+  if ((a === null || b === null) && doc.faces) {
+    const as: number[] = []; const bs: number[] = [];
+    for (const f of Object.values(doc.faces)) {
+      const face = (f ?? {}) as { absent?: boolean; dimensions?: Array<{ object?: string; score?: number }> };
+      if (face.absent) continue;
+      const da = (face.dimensions ?? []).filter((x) => x?.object === 'a' && typeof x?.score === 'number').map((x) => x.score as number);
+      const db = (face.dimensions ?? []).filter((x) => x?.object === 'b' && typeof x?.score === 'number').map((x) => x.score as number);
+      if (da.length) as.push(da.reduce((s, v) => s + v, 0) / da.length);
+      if (db.length) bs.push(db.reduce((s, v) => s + v, 0) / db.length);
+    }
+    if (a === null && as.length) a = Math.round((as.reduce((s, v) => s + v, 0) / as.length) * 100) / 100;
+    if (b === null && bs.length) b = Math.round((bs.reduce((s, v) => s + v, 0) / bs.length) * 100) / 100;
+  }
+  const bothPass = a !== null && b !== null && a > JOINT_GRADE_THRESHOLD && b > JOINT_GRADE_THRESHOLD;
+  return { a, b, bothPass };
+}
+
+export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<{ grade: JointGrade; charter: 'skipped' | 'attempted' } | void> {
   if (process.env.LOOP_JOINT_REVIEW === '0') return;
   const runDir = typeof params.runDir === 'string' ? params.runDir : '';
   if (!runDir) return;
@@ -349,7 +376,26 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
     console.error('[fade001:joint-review] spawn rc=' + String(r.status) + ' (fail-closed): ' + String((r.stderr ?? '').slice(-200)));
     return;
   }
+  // ── 阶段1 完成：读联审卷→grade（A/B 聚合口径不变·单一源 computeJointGrade）──
+  let grade: JointGrade = { a: null, b: null, bothPass: false };
+  try {
+    const jr = JSON.parse(readFileSync(path.join(runDir, 'joint-review.json'), 'utf8'));
+    grade = computeJointGrade(jr);
+  } catch (e) {
+    console.error('[fade001:joint-review] joint-review.json unreadable（grade unknown·按未达标走 charter 链）: '
+      + (e instanceof Error ? e.message : String(e)));
+  }
+  // ── 阶段2：条件 charter（DP-021·CTO 裁）——达标轮 skip 留痕；未达标轮照现生成器链 ──
+  if (grade.bothPass) {
+    try {
+      writeFileSync(path.join(runDir, 'charter-skip.json'),
+        JSON.stringify({ reason: 'A/B passed', gate: `a>${JOINT_GRADE_THRESHOLD} && b>${JOINT_GRADE_THRESHOLD}`, grade }, null, 2) + String.fromCharCode(10), 'utf8');
+    } catch { /* 留痕面零阻断 */ }
+    console.error(`[fade001:charter-hook] skipped: A/B passed (a=${String(grade.a)}, b=${String(grade.b)})`);
+    return { grade, charter: 'skipped' as const };
+  }
   await tryCharterHook(io, st, params);   // opinions.json → 生成器 → pending 写（P4 tie 位移后同链复用）
+  return { grade, charter: 'attempted' as const };
 }
 
 /** @internal P4 接线件（COO 派工 2026-11-21）：debug 联审毕→生成器调用钩子（COS 契约冻结面）。

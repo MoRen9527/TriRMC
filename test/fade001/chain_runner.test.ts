@@ -293,5 +293,7 @@ test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=7_200_000（7×900
   const spawnSeg = STAGES.find((s) => s.name === 'score_skill');
   assert.equal(spawnSeg?.timeoutMs, SPAWN_STAGE_TIMEOUT_MS);
   const overridden = STAGES.filter((s) => s.timeoutMs !== undefined);
-  assert.deepEqual(overridden.map((s) => s.name), ['score_skill']);   // 唯一覆写段
+  // DP-20261123-019：段 3 超时预算覆写（300s 快失败）+段 7 spawn 窗——两段覆写
+  assert.deepEqual(overridden.map((s) => s.name), ['plan_scope', 'score_skill']);
+  assert.equal(STAGES.find((s) => s.name === 'plan_scope')?.timeoutMs, 300_000);   // 段 3=300s 快失败
 });

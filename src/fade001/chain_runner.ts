@@ -90,6 +90,8 @@ export const STAGES: StageDef[] = [
     name: 'plan_scope',
     script: PLAN_SPAWN ? 'plan_skill_spawn.py' : 'plan_scope.py',
     output: 'plan.json',
+    // DP-20261123-019（CTO 规格③）：段 3 超时预算 900s→300s 快失败（正常 ~2.5min·防长耗风暴吞噬整轮）
+    timeoutMs: 300_000,
     // CLI 形：--operating-root 必传绝对形（CLI 缺省=相对 cwd 解析·第八发实锚 2026-11-21）+
     // --start-date（周目录年段推算第一候选分支入参·零传=fallthrough 面）
     // spawn 形（P3 灰度）：单席 cos 产出 plan.json·argv 仅 run 面（schema 校验在脚本内 fail-closed）

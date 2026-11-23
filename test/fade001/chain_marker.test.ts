@@ -59,3 +59,41 @@ test('DP-032 absent 态：无 marker=放行面', () => {
     assert.equal(existsSync(process.env.TRI_CHAIN_MARKER as string), false);
   });
 });
+
+// ── R 形（跨机 ref marker·CTO 裁 2026-11-23）──
+import { execFileSync } from 'node:child_process';
+import { writeChainMarkerRef, clearChainMarkerRef, chainRefInfo, CHAIN_MARKER_REF } from '../../src/fade001/chain_marker.js';
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+}
+
+function mkRepoPair(): { repo: string; bare: string } {
+  const base = mkdtempSync(path.join(tmpdir(), 'dp032r-'));
+  const repo = path.join(base, 'repo');
+  const bare = path.join(base, 'bare.git');
+  execFileSync('git', ['init', '-q', repo], { encoding: 'utf8' });
+  writeFileSync(path.join(repo, 'a.txt'), 'x');
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-q', '-m', 'init']);
+  execFileSync('git', ['init', '-q', '--bare', bare], { encoding: 'utf8' });
+  git(repo, ['remote', 'add', 'origin', bare]);
+  return { repo, bare };
+}
+
+test('DP-032 R 形：push marker ref → bare 可见 running·消息含 runId·delete 后 absent', () => {
+  const { repo, bare } = mkRepoPair();
+  assert.equal(writeChainMarkerRef(repo, 'r-ref-1'), true);
+  const info = chainRefInfo(bare);
+  assert.equal(info.state, 'running');
+  assert.ok(String(info.raw).includes('r-ref-1'));
+  assert.equal(clearChainMarkerRef(repo), true);
+  assert.equal(chainRefInfo(bare).state, 'absent');
+  assert.equal(execFileSync('git', ['for-each-ref', CHAIN_MARKER_REF], { cwd: bare, encoding: 'utf8' }).trim(), '');
+});
+
+test('DP-032 R 形：push 失败=返回 false（fail-open 面）', () => {
+  const { repo } = mkRepoPair();
+  git(repo, ['remote', 'set-url', 'origin', '/nonexistent/bare.git']);
+  assert.equal(writeChainMarkerRef(repo, 'r-fail'), false);
+});

@@ -68,9 +68,13 @@ function seedState(st: Partial<RunnerState>): RunnerState {
   writeFileSync(path.join(root, 'state', 'runner-state.json'), JSON.stringify(full, null, 2), 'utf8');
   return full;
 }
-function seedRuling(ruling: string): void {
+function seedRuling(ruling: string, runId?: string, roundCount = 1): void {
+  // DP-030 三绑形：runId 缺省=旧件形（供旧件拒案）
   mkdirSync(path.join(root, 'state'), { recursive: true });
-  writeFileSync(path.join(root, 'state', 'ceo-ruling.json'), JSON.stringify({ ruling }, null, 2), 'utf8');
+  const doc = runId === undefined
+    ? { ruling }
+    : { ruling, run_id: runId, round_count: roundCount, signed_at: new Date().toISOString() };
+  writeFileSync(path.join(root, 'state', 'ceo-ruling.json'), JSON.stringify(doc, null, 2), 'utf8');
 }
 function readFlagVol(): FlagVolume {
   return JSON.parse(readFileSync(path.join(root, 'state', 'flag.json'), 'utf8')) as FlagVolume;
@@ -120,7 +124,7 @@ describe('F-2 四支路由', () => {
   });
   it('DP-009 #16 runId 贯穿轮层：链层 params.run_id→runner-state.run_id', async () => {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
-    seedRuling('continue');
+    seedRuling('continue', 'DP-009-rr-1');
     const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit' }]);
     await runLoop(makeIo(root, runner), { params: { run_id: 'DP-009-rr-1' } });
     const st = readRunnerState(makeIo(root, runner));
@@ -128,7 +132,7 @@ describe('F-2 四支路由', () => {
   });
   it('DP-009 老 state 无 run_id 字段→宽容读+入口补写', async () => {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
-    seedRuling('continue');
+    seedRuling('continue', 'DP-009-rr-2');
     // 老态：file 里无 run_id 键（#16 前形）
     writeFileSync(path.join(root, 'state', 'runner-state.json'),
       JSON.stringify({ round_count: 3, resume_stage: null }, null, 2), 'utf8');
@@ -138,17 +142,18 @@ describe('F-2 四支路由', () => {
     assert.strictEqual(st.run_id, 'DP-009-rr-2');   // 老态补写
     assert.strictEqual(st.round_count, 4);          // 既有行为不破（3+1 轮·EXIT 轮零增）
   });
-  it('F-2b debug 支 ruling=continue→续轮迭代', async () => {
+  it('F-2b debug 支 ruling=continue→单轮放行·次轮一纸一轮拒（DP-030 新正形）', async () => {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
-    seedRuling('continue');
+    seedRuling('continue', 'b1');
     const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }, { verdict: 'loop_exit' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'b1' } });
-    assert.strictEqual(out.exit?.kind, 'prod');
-    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(out.exit, null);              // 次轮裁决已消费→absent 挂起（一纸一轮）
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(readRunnerState(makeIo(root, runner)).ruling_consumed_ref, 'b1:1');  // 消费戳落卷
   });
   it('F-2c debug 支 ruling=terminate→break（failed·round_count 零增）', async () => {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
-    seedRuling('terminate');
+    seedRuling('terminate', 'c1');
     const { runner, calls } = makeRunner([{ verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'c1' } });
     assert.strictEqual(out.exit?.kind, 'failed');
@@ -183,7 +188,7 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
   try {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:m9' });
     seedState({ round_count: 8 });
-    seedRuling('terminate');
+    seedRuling('terminate', 'm9b');
     const { runner } = makeRunner([{ verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'm9b' } });
     assert.notStrictEqual(out.exit?.kind, 'fuse');
@@ -236,6 +241,41 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
 
 // ── F-3 程序自动边唯一性（EXIT≥95→prod 唯一 sanctioned 边） ─────────────
 
+
+describe('DP-030 ceo-ruling 三绑与一纸一轮', () => {
+  it('旧件（无 run_id/round_count/signed_at）→absent 不认', async () => {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+    seedRuling('continue');                       // 旧形（无三绑）
+    const { runner, calls } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner), { params: { run_id: 'd30a' } });
+    assert.strictEqual(out.exit, null);
+    assert.strictEqual(calls.length, 1);
+  });
+  it('跨 run 件拒（run_id 不匹配本 run）→absent', async () => {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+    seedRuling('continue', 'other-run');
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner), { params: { run_id: 'd30b' } });
+    assert.strictEqual(out.exit, null);
+  });
+  it('signed_at 缺→absent（三绑不全）', async () => {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+    mkdirSync(path.join(root, 'state'), { recursive: true });
+    writeFileSync(path.join(root, 'state', 'ceo-ruling.json'),
+      JSON.stringify({ ruling: 'continue', run_id: 'd30c', round_count: 1 }), 'utf8');
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner), { params: { run_id: 'd30c' } });
+    assert.strictEqual(out.exit, null);
+  });
+  it('terminate 三绑齐→terminated（failed exit）·一纸不重复消费面由 continue 案覆盖', async () => {
+    seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+    seedRuling('terminate', 'd30d');
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const out = await runLoop(makeIo(root, runner), { params: { run_id: 'd30d' } });
+    assert.strictEqual(out.exit?.kind, 'failed');
+    assert.match(out.exit?.detail ?? '', /terminate/);
+  });
+});
 describe('F-3 程序自动边唯一性', () => {
   it('F-3a 非 EXIT 轮零程序写 flag 面·EXIT 轮=唯一写面', async () => {
     const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'loop_exit', run_dir: 'rd-u1' }]);
@@ -323,7 +363,7 @@ describe('IO 点火/裁决面', () => {
   });
   it('IO-3 裁决事件源=ceo-ruling.json 卷面消费·非法 ruling 值→absent（fail-closed）', async () => {
     seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
-    seedRuling('maybe');
+    seedRuling('maybe', 'io3');
     const { runner } = makeRunner([{ verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'io3' } });
     assert.strictEqual(out.exit, null);              // 非法值=absent 挂起·不误推进

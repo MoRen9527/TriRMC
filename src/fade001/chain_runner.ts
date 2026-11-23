@@ -80,7 +80,8 @@ const CLOSE_SPAWN = process.env.FADE_CLOSE_SPAWN !== '0';
 export const STAGES: StageDef[] = [
   {
     name: 'preflight', script: 'preflight.py', output: 'preflight.json', redirect: true,
-    argv: (p) => ['--from', p.fromWeek, '--to', p.toWeek, '--start-date', p.startDate],
+    // DP-030：传 run-dir 供 preflight prev 解析显式排除自身（argv 与 parser 同 commit 原子落）
+    argv: (p) => ['--from', p.fromWeek, '--to', p.toWeek, '--start-date', p.startDate, '--run-dir', p.runDir],
   },
   {
     name: 'qualify', script: 'qualify.py', output: 'qualify.json', redirect: true,

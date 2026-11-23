@@ -120,6 +120,8 @@ export interface RunnerState {
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
   // DP-014 守卫双修（CTO 规格 2026-11-23）：pending 所属 runId（跨 run 判重锚·旧 run 残留不挡新联审）
   charter_run_id?: string | null;
+  /** DP-030（CTO 急修·一纸一轮）：裁决件消费戳 `<run_id>:<round_count>` */
+  ruling_consumed_ref?: string | null;
   // charter_approval 值表登记（CTO 附注 2026-11-21·防枚举漂散·照 rubric_defect 先例）：
   //   null = 未派生（无待批任务书）· 'CEO'/'COS' = 待批态（属主名·钩子写入）
   //   'APPROVED_CEO'/'APPROVED_COS' = 已批态（挂载 choreography 后更新·拾取面可见）
@@ -308,7 +310,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     }
     if (flagVol.flag === 'debug') {                              // 体内候裁决事件（notice-202 门=事件源单值）
       // P4 tie 位移（CTO ce26401a9 v7）：生成器链上移轮末钩（runJointReviewHook 内），本块仅裁决事件。
-      const ruling = await awaitCeoRuling(io);                   // continue/terminate/absent 三态
+      const ruling = await awaitCeoRuling(io, st, params);                   // continue/terminate/absent 三态
       if (ruling === 'terminate') {
         return { exit: { kind: 'failed', detail: 'CEO ruling=terminate' }, rounds_run: rounds, final_state: st };
       }
@@ -460,11 +462,39 @@ export async function tryCharterMount(io: RoundRunnerIo, st: RunnerState, params
 }
 
 /** CEO 裁决事件源（round-queue/state/ceo-ruling.json 落卷=体内 await 事件源·>72h 升级催办挂起保持） */
-async function awaitCeoRuling(io: RoundRunnerIo): Promise<'continue' | 'terminate' | 'absent'> {
+async function awaitCeoRuling(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<'continue' | 'terminate' | 'absent'> {
   const p = path.join(io.queueRoot, 'state', 'ceo-ruling.json');
   if (!existsSync(p)) return 'absent';
-  const vol = JSON.parse(readFileSync(p, 'utf8')) as { ruling?: string };
-  if (vol.ruling === 'continue' || vol.ruling === 'terminate') return vol.ruling;
+  let vol: { ruling?: string; run_id?: string; round_count?: number; signed_at?: string };
+  try {
+    vol = JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return 'absent';
+  }
+  // DP-030 防御面（CTO 急修·与 preflight check_ceo_ruling 同构）：
+  // ①三绑：run_id 匹配本 run + round_count 必带 + signed_at；⑤旧件缺键=absent 不认（旧 continue 作废需重签）
+  const rid = String(params.run_id ?? '');
+  if (!vol?.run_id || vol.round_count === undefined || !vol.signed_at) {
+    console.error('[fade001:ceo-ruling] rejected: legacy file missing run_id/round_count/signed_at (DP-030)');
+    return 'absent';
+  }
+  if (String(vol.run_id) !== rid) {
+    console.error(`[fade001:ceo-ruling] rejected: cross-run file run_id=${String(vol.run_id)} != ${rid} (DP-030)`);
+    return 'absent';
+  }
+  // ②一纸一轮：消费戳比对
+  const ref = `${vol.run_id}:${vol.round_count}`;
+  if (st.ruling_consumed_ref === ref) {
+    console.error(`[fade001:ceo-ruling] rejected: already consumed ${ref} (DP-030)`);
+    return 'absent';
+  }
+  const decision = String(vol.ruling ?? '').toLowerCase();
+  if (decision === 'continue') {
+    st.ruling_consumed_ref = ref;   // ③消费即写戳（下一轮不可复用）
+    writeRunnerState(io, st);
+    return 'continue';
+  }
+  if (decision === 'terminate') return 'terminate';
   return 'absent';
 }
 

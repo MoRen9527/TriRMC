@@ -22,6 +22,8 @@
 import { makeChainRunner } from '../src/fade001/chain_runner.js';
 import { probeActivationGate, runLoop } from '../src/fade001/round_runner.js';
 import type { RoundRunnerIo } from '../src/fade001/round_runner.js';
+// DP-20261123-032（D-91 链跑期禁推）：链跑态 marker——启动写/退出删/闸端 stale>2h 保护
+import { writeChainMarker, clearChainMarker } from '../src/fade001/chain_marker.js';
 
 interface IgniteArgs {
   runDir: string;
@@ -70,6 +72,8 @@ function parseArgs(argv: string[]): IgniteArgs {
 async function main(): Promise<void> {
   const a = parseArgs(process.argv.slice(2));
   const checks = JSON.parse(a.checksJson) as Record<string, unknown>;
+  writeChainMarker(a.runId);   // DP-032：链跑态开哨（失败=warn 不阻链跑）
+  try {
 
   const chain = makeChainRunner({ triCompanyRoot: a.triCompanyRoot, pythonBin: a.pythonBin });
   const io: RoundRunnerIo = {
@@ -95,6 +99,9 @@ async function main(): Promise<void> {
     final_state: outcome.final_state,
     stages_run: chain.stagesRun,
   }, null, 2) + '\n');
+  } finally {
+    clearChainMarker();   // DP-032：链毕（含异常路径）撤哨——pid 归属比对防误删他链
+  }
 }
 
 main().catch((e: unknown) => {

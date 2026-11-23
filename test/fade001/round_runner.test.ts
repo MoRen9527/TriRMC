@@ -702,6 +702,17 @@ test('DP-021 未达标轮：走 charter 生成链（attempted 且无 skip 文件
   }
 });
 
+
+test('DP-030 键名兼容：decision 键（preflight 形）亦被 awaitCeoRuling 接受', async () => {
+  seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+  mkdirSync(path.join(root, 'state'), { recursive: true });
+  writeFileSync(path.join(root, 'state', 'ceo-ruling.json'),
+    JSON.stringify({ decision: 'continue', run_id: 'k1', round_count: 1, signed_at: new Date().toISOString() }), 'utf8');
+  const { runner, calls } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }]);
+  const out = await runLoop(makeIo(root, runner), { params: { run_id: 'k1' } });
+  assert.strictEqual(calls.length, 2);            // 首轮放行（decision 键被读）
+  assert.strictEqual(out.exit, null);             // 次轮一纸一轮→absent 挂起
+});
 test('DP-014 守卫双修三态：本 run pending 挡 / 他 run pending 不挡 / approved 放行', async () => {
   const mkStub = () => {
     const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp014g-tc-'));

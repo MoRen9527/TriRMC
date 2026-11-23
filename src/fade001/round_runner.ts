@@ -488,7 +488,8 @@ async function awaitCeoRuling(io: RoundRunnerIo, st: RunnerState, params: RoundP
     console.error(`[fade001:ceo-ruling] rejected: already consumed ${ref} (DP-030)`);
     return 'absent';
   }
-  const decision = String(vol.ruling ?? '').toLowerCase();
+  // CTO 2026-11-23 键名 drift 修：同工件两键名（preflight 读 decision / 本面旧读 ruling）——decision 主·ruling 兼容
+  const decision = String((vol as { decision?: string }).decision ?? vol.ruling ?? '').toLowerCase();
   if (decision === 'continue') {
     st.ruling_consumed_ref = ref;   // ③消费即写戳（下一轮不可复用）
     writeRunnerState(io, st);

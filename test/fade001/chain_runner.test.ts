@@ -298,6 +298,50 @@ test('P3→v7 flip：段 3/8 默认 spawn script（CEO v7 任务书·env =0 回 
   assert.equal(STAGES[7].script, 'close_skill_spawn.py');
 });
 
+
+test('charter 1/2/5 段门：dce 非 pass（rc0·dry_run_not_executed）→止链·failed_stage=dce·不 notify', async () => {
+  const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate-'));
+  const b = greenBehavior(runDir);
+  b.dce = { write: path.join(runDir, 'dce.json'), body: '{"verdict":"dry_run_not_executed"}' };
+  const tc = stubAll(b);
+  const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+  const r = await runner.run({ runDir, runId: 'g1', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+  assert.equal(r.ok, false);
+  assert.equal(r.failed_stage, 'dce');                       // ②failed_stage 可诊断
+  assert.match(String(r.err), /门拒（非 pass 止链·不 notify）/);
+  assert.ok(!runner.stagesRun.includes('verify'));           // ①禁穿门到段 5+
+  assert.ok(!existsSync(path.join(runDir, 'notify_done.json')));   // ②notify 不触
+});
+
+test('charter 1/2/5 段门：dce verdict=fail（rc0）同止链', async () => {
+  const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate2-'));
+  const b = greenBehavior(runDir);
+  b.dce = { write: path.join(runDir, 'dce.json'), body: '{"verdict":"fail"}' };
+  const tc = stubAll(b);
+  const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+  const r = await runner.run({ runDir, runId: 'g2', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+  assert.equal(r.ok, false);
+  assert.equal(r.failed_stage, 'dce');
+});
+
+test('charter 1/2/5 回退锚：FADE_CHAIN_GATE_STRICT=0 → 旧形续链', async () => {
+  const old = process.env.FADE_CHAIN_GATE_STRICT;
+  process.env.FADE_CHAIN_GATE_STRICT = '0';
+  try {
+    const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate3-'));
+    const b = greenBehavior(runDir);
+    b.dce = { write: path.join(runDir, 'dce.json'), body: '{"verdict":"dry_run_not_executed"}' };
+    const tc = stubAll(b);
+    const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+    const r = await runner.run({ runDir, runId: 'g3', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+    assert.equal(r.ok, true);                                // 旧形：门不拦
+    assert.ok(runner.stagesRun.includes('verify'));
+  } finally {
+    if (old === undefined) delete process.env.FADE_CHAIN_GATE_STRICT;
+    else process.env.FADE_CHAIN_GATE_STRICT = old;
+  }
+});
+
 test('CS-13 spawn 窗对表随行项：SPAWN_STAGE_TIMEOUT_MS=7_200_000（7×900s+15min 余量（CTO 2026-11-21 上调））·段 7 覆写形在位·余段缺省', () => {
   assert.equal(SPAWN_STAGE_TIMEOUT_MS, 7_200_000);   // 7 席×900s+开销余量（COO 释放令条款③勘定值面）
   const spawnSeg = STAGES.find((s) => s.name === 'score_skill');

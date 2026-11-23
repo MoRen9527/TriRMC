@@ -135,6 +135,8 @@ export interface RunResult {
   run_dir: string;
   aggregate: { average?: number; verdict?: 'loop_exit' | 'continue' | string };
   err?: string;
+  /** charter 1/2/5（CTO spec）：段门拒绝时的段名（可诊断·stop-on-non-pass） */
+  failed_stage?: string;
 }
 
 export interface ChainRunner {

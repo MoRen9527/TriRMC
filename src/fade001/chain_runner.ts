@@ -36,6 +36,30 @@ import path from 'node:path';
 import type { ChainRunner, RoundParams, RunResult } from './round_runner.js';
 
 /** 段特有参数面（白名单构造 argv 用·零瞎传） */
+/** charter 1/2/5（CTO spec d8582717f·CEO 批 2026-11-24）：段门语义统一——
+ *  每段毕统一判「pass→续／非 pass→止链+不 notify」；判定=单一实现点。
+ *  回退锚：env FADE_CHAIN_GATE_STRICT=0 回旧形（rc-only）。 */
+export const chainGateStrict = (): boolean => process.env.FADE_CHAIN_GATE_STRICT !== '0';   // 动态读（回退锚 FADE_CHAIN_GATE_STRICT=0）
+
+export interface StageGateResult { ok: boolean; detail: string; verdict?: string; }
+
+/** 段输出门：读段产物 JSON·含 verdict 键则 pass 才过（dce/verify/score/plan 等）；
+ *  无产物/无 verdict 键=门 skip（ok）。 */
+export function gateStageResult(stage: { name: string; output: string }, runDir: string): StageGateResult {
+  const p = path.join(runDir, stage.output);
+  if (!existsSync(p)) return { ok: true, detail: 'no output (gate skip)' };
+  try {
+    const doc = JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>;
+    if (!doc || typeof doc !== 'object' || !('verdict' in doc)) {
+      return { ok: true, detail: 'no verdict key (gate skip)' };
+    }
+    const v = String(doc.verdict);
+    return { ok: v === 'pass', detail: `verdict=${v}`, verdict: v };
+  } catch {
+    return { ok: true, detail: 'unparsable (gate skip·解析面归 parse 加固件)' };
+  }
+}
+
 export interface ChainParams {
   runDir: string;          // run 目录（产物落卷位·调用面铸形）
   runId: string;
@@ -249,6 +273,19 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
       if (st.redirect) {
         // stdout JSON 重定向族（preflight/qualify·CLI 头注承录形）——本件落卷
         writeFileSync(path.join(runDir, st.output), (r.stdout ?? '') , 'utf8');
+      }
+      // ── charter 1/2/5 段门（CTO spec·CEO 批）：非 pass=止链+不 notify（后半段自然不触）──
+      if (chainGateStrict()) {
+        const g = gateStageResult(st, runDir);
+        if (!g.ok) {
+          return {
+            ok: false,
+            run_dir: runDir,
+            aggregate: {},
+            failed_stage: st.name,
+            err: `段 ${i + 1}(${st.name}) 门拒（非 pass 止链·不 notify）：${g.detail}`,
+          };
+        }
       }
     }
 

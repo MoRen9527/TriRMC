@@ -646,7 +646,7 @@ test('P4 接线件 hook 三态：no-op（无 opinions）/fail-closed（坏 opini
     // 3) 成功（合法五字段卷）
     writeFileSync(path.join(root, 'opinions.json'), JSON.stringify({
       schema_version: '1.0.0', run_id: 'h1',
-      opinions: [{ opinion_id: 'op1', title: 't', target: 'a.ts', change: 'c', verify: 'v', rollback: 'r' }],
+      opinions: [{ opinion_id: 'op1', title: 't', target: 'a.ts', change: 'c', verify: 'v', rollback: 'r', owner_seat: 'cos' }],   // T1② 六字段
     }));
     await tryCharterHook(io, st, { run_id: 'h1', runDir: root });
     assert.ok(typeof st.pending_charter_ref === 'string' && st.pending_charter_ref.length > 0);

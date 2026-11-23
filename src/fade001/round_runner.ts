@@ -22,7 +22,7 @@
 // resume 轮间指令面（D1 §六A·勘面卷 §七.3 续跑边）：retry_flag.json pending-retry 轮→
 // 下轮点火指令携带 resumeStage=7（D5 拟稿 schema 承·--resume-stage 7 形）。
 
-import { SPAWN_STAGE_TIMEOUT_MS } from './chain_runner.js';
+import { SPAWN_STAGE_TIMEOUT_MS, appendPyPath } from './chain_runner.js';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
@@ -331,8 +331,15 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
   const script = path.join(cogDir, 'loop_joint_review_spawn.py');
   if (!existsSync(script)) { console.error('[fade001:joint-review] script missing (fail-closed): ' + script); return; }
   const py = process.env.FADE_PYTHON ?? 'python3';
-  const r = spawnSync(py, [script, '--run-dir', runDir, '--run-id', String(params.run_id ?? '')],
-    { encoding: 'utf8', timeout: SPAWN_STAGE_TIMEOUT_MS });
+  // DP-20261123-014（CTO 规格·DP-012 同族）：hook spawn 子进程 env/cwd 自足——
+  // 联审七席 spawn 不再依赖调用方 env（ModuleNotFoundError 面修·cwd=TC 检出根·PYTHONPATH append）。
+  const _tcRoot = path.dirname(path.dirname(cogDir));
+  const r = spawnSync(py, [script, '--run-dir', runDir, '--run-id', String(params.run_id ?? '')], {
+    encoding: 'utf8',
+    timeout: SPAWN_STAGE_TIMEOUT_MS,
+    cwd: _tcRoot,
+    env: { ...process.env, PYTHONPATH: appendPyPath(process.env.PYTHONPATH, _tcRoot) },
+  });
   if (r.status !== 0) {
     console.error('[fade001:joint-review] spawn rc=' + String(r.status) + ' (fail-closed): ' + String((r.stderr ?? '').slice(-200)));
     return;

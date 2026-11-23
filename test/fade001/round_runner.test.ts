@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  runLoop, readFlag, setFlag, readRunnerState, writeRunnerState,
+  runLoop, readFlag, setFlag, readRunnerState, writeRunnerState, runJointReviewHook,
   nextFlagEdge, flagApprovalOwner, tryCharterHook, tryCharterMount,
   FUSE_MAX_ROUNDS, EXIT_GATE, RESUME_STAGE_RETRY,
   type RoundRunnerIo, type ChainRunner, type RunResult, type RoundParams,
@@ -534,4 +534,37 @@ test('P4 六边状态机：E1 prod<=95→test / E2 test 8轮>95→debug / E5 tes
   assert.equal(e3?.edge, 'E3_debug_back');
   assert.equal(flagApprovalOwner(e3!), 'CEO');
   assert.equal(flagApprovalOwner(nextFlagEdge('test', { average: 96 })!), 'COS');
+});
+
+test('DP-014 hook spawn env/cwd 自足：子进程 cwd=TC根·PYTHONPATH 含 TC根（stub 实读）', async () => {
+  const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp014-tc-'));
+  const cogDir = path.join(tcRoot, 'runtime', 'cognition');
+  mkdirSync(cogDir, { recursive: true });
+  const probeOut = path.join(tcRoot, 'probe.json');
+  // stub：回写 cwd+PYTHONPATH 后 rc=3（非零→钩 fail-closed 即返回·不触 tryCharterHook）
+  const pyStub = [
+    'import os, json, sys',
+    `open(r"${probeOut}", "w").write(json.dumps({"cwd": os.getcwd(), "pp": os.environ.get("PYTHONPATH", "")}))`,
+    'sys.exit(3)',
+    '',
+  ].join('\n');
+  writeFileSync(path.join(cogDir, 'loop_joint_review_spawn.py'), pyStub, 'utf8');
+  const root = mkdtempSync(path.join(tmpdir(), 'dp014-q-'));
+  const rd = mkdtempSync(path.join(tmpdir(), 'dp014-rd-'));
+  const old = { cog: process.env.TRICO_COGNITION_DIR, py: process.env.FADE_PYTHON, jr: process.env.LOOP_JOINT_REVIEW };
+  process.env.TRICO_COGNITION_DIR = cogDir;
+  process.env.FADE_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+  delete process.env.LOOP_JOINT_REVIEW;
+  try {
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const st = { round_count: 0, resume_stage: null };
+    await runJointReviewHook(makeIo(root, runner), st, { runDir: rd, run_id: 'dp014' } as never);
+    const probe = JSON.parse(readFileSync(probeOut, 'utf8'));
+    assert.equal(probe.cwd, tcRoot);                       // cwd=TC 检出根
+    assert.ok(String(probe.pp).split(path.delimiter).includes(tcRoot));  // PYTHONPATH 含 TC 根（append·不覆盖）
+  } finally {
+    if (old.cog === undefined) delete process.env.TRICO_COGNITION_DIR; else process.env.TRICO_COGNITION_DIR = old.cog;
+    if (old.py === undefined) delete process.env.FADE_PYTHON; else process.env.FADE_PYTHON = old.py;
+    if (old.jr !== undefined) process.env.LOOP_JOINT_REVIEW = old.jr;
+  }
 });

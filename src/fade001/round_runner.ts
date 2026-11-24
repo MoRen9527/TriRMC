@@ -419,7 +419,10 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
   // DP-20261123-014（CTO 规格·DP-012 同族）：hook spawn 子进程 env/cwd 自足——
   // 联审七席 spawn 不再依赖调用方 env（ModuleNotFoundError 面修·cwd=TC 检出根·PYTHONPATH append）。
   const _tcRoot = path.dirname(path.dirname(cogDir));
-  const r = spawnSync(py, [script, '--run-dir', runDir, '--run-id', String(params.run_id ?? '')], {
+  // v8 item13（CPO spec 7afd95a2a）：模式判据=态 flag（prod 且未禁 lite）→lite；debug/test→full（现行为不变）
+  const reviewMode: 'lite' | 'full' = ((process.env.LOOP_JOINT_REVIEW_LITE !== '0') && readFlag(io).flag === 'prod') ? 'lite' : 'full';
+  const r = spawnSync(py, [script, '--run-dir', runDir, '--run-id', String(params.run_id ?? ''),
+    '--review-mode', reviewMode], {
     encoding: 'utf8',
     timeout: SPAWN_STAGE_TIMEOUT_MS,
     cwd: _tcRoot,
@@ -439,7 +442,27 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
       + (e instanceof Error ? e.message : String(e)));
   }
   // ── 阶段2：条件 charter（DP-021·CTO 裁）——达标轮 skip 留痕；未达标轮照现生成器链 ──
+  const _patchConsumption = (): void => {
+    // v8 item13：consumption_ratio=charter_items/opinions_total（charter 侧回填·双模式均有值）
+    try {
+      const jp = path.join(runDir, 'joint-review.json');
+      const jd = JSON.parse(readFileSync(jp, 'utf8')) as Record<string, unknown>;
+      const opsTotal = Number((jd.opinions_total as number | undefined) ?? 0);
+      let chItems = 0;
+      if (st.pending_charter_ref) {
+        try {
+          const cd = JSON.parse(readFileSync(st.pending_charter_ref, 'utf8')) as Record<string, unknown>;
+          const arr = (cd.items ?? cd.charter_items ?? []) as unknown[];
+          chItems = Array.isArray(arr) ? arr.length : 0;
+        } catch { chItems = 0; }
+      }
+      jd.review_mode = jd.review_mode ?? reviewMode;
+      jd.consumption_ratio = opsTotal > 0 ? Number((chItems / opsTotal).toFixed(3)) : null;
+      writeFileSync(jp, JSON.stringify(jd, null, 2) + String.fromCharCode(10), 'utf8');
+    } catch { /* 留痕面零阻断 */ }
+  };
   if (grade.bothPass) {
+    _patchConsumption();
     try {
       writeFileSync(path.join(runDir, 'charter-skip.json'),
         JSON.stringify({ reason: 'A/B passed', gate: `a>${JOINT_GRADE_THRESHOLD} && b>${JOINT_GRADE_THRESHOLD}`, grade }, null, 2) + String.fromCharCode(10), 'utf8');
@@ -448,6 +471,7 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
     return { grade, charter: 'skipped' as const };
   }
   await tryCharterHook(io, st, params);   // opinions.json → 生成器 → pending 写（P4 tie 位移后同链复用）
+  _patchConsumption();
   return { grade, charter: 'attempted' as const };
 }
 

@@ -744,6 +744,46 @@ test('DP-021 grade 单源：computeJointGrade 门槛 A>90 && B>90（边界 90=�
   assert.equal(fromFaces.b, 95);
 });
 
+
+test('v8 item13：hook 传 --review-mode（prod→lite/debug→full）+ consumption_ratio 回填', async () => {
+  const tcRoot = mkdtempSync(path.join(tmpdir(), 'i13-tc-'));
+  const cogDir = path.join(tcRoot, 'runtime', 'cognition');
+  mkdirSync(cogDir, { recursive: true });
+  const rd = mkdtempSync(path.join(tmpdir(), 'i13-rd-'));
+  const argvFile = path.join(rd, 'spawn-argv.txt');
+  const pyStub = [
+    'import json, sys, os',
+    `open(r"${argvFile}", "w").write(" ".join(sys.argv))`,
+    `open(r"${path.join(rd, 'joint-review.json')}", "w").write(json.dumps({"seat_means": {"a": 95.0, "b": 96.0}, "review_mode": "lite", "opinions_total": 4}))`,
+    'sys.exit(0)',
+    '',
+  ].join(String.fromCharCode(10));
+  writeFileSync(path.join(cogDir, 'loop_joint_review_spawn.py'), pyStub, 'utf8');
+  const oldEnv = { cog: process.env.TRICO_COGNITION_DIR, py: process.env.FADE_PYTHON, jr: process.env.LOOP_JOINT_REVIEW, lite: process.env.LOOP_JOINT_REVIEW_LITE };
+  process.env.TRICO_COGNITION_DIR = cogDir;
+  process.env.FADE_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+  delete process.env.LOOP_JOINT_REVIEW; delete process.env.LOOP_JOINT_REVIEW_LITE;
+  try {
+    seedFlag({ flag: 'prod' });
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const st: RunnerState = { round_count: 0, resume_stage: null };
+    await runJointReviewHook(makeIo(root, runner), st, { runDir: rd, run_id: 'i13' } as never);
+    const argvStr = readFileSync(argvFile, 'utf8');
+    assert.match(argvStr, /--review-mode lite/);
+    const jr = JSON.parse(readFileSync(path.join(rd, 'joint-review.json'), 'utf8'));
+    assert.equal(jr.review_mode, 'lite');
+    assert.equal(jr.consumption_ratio, 0);   // 无 charter items/4 条意见=0（不臆造）
+    seedFlag({ flag: 'debug' });
+    await runJointReviewHook(makeIo(root, runner), st, { runDir: rd, run_id: 'i13b' } as never);
+    assert.match(readFileSync(argvFile, 'utf8'), /--review-mode full/);
+  } finally {
+    if (oldEnv.cog === undefined) delete process.env.TRICO_COGNITION_DIR; else process.env.TRICO_COGNITION_DIR = oldEnv.cog;
+    if (oldEnv.py === undefined) delete process.env.FADE_PYTHON; else process.env.FADE_PYTHON = oldEnv.py;
+    if (oldEnv.jr !== undefined) process.env.LOOP_JOINT_REVIEW = oldEnv.jr;
+    if (oldEnv.lite !== undefined) process.env.LOOP_JOINT_REVIEW_LITE = oldEnv.lite;
+  }
+});
+
 test('DP-021 达标轮：charter skip 留痕（charter-skip.json·pending 零写）', async () => {
   const tcRoot = mkdtempSync(path.join(tmpdir(), 'dp021-tc-'));
   const cogDir = path.join(tcRoot, 'runtime', 'cognition');

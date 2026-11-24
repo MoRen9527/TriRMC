@@ -50,6 +50,9 @@ export interface CharterItem {
   change: string;
   verify: string;
   rollback: string;
+  owner_seat?: string;                                  // DP-035（五→六字段）
+  covered_dims?: string[];                              // T1② 覆盖校验原料
+  [k: string]: unknown;                                 // 透传位（六字段外扩展容忍）
 }
 
 /** 任务书草稿（pending_approval·不含 auto_dispatch 除显式授予） */

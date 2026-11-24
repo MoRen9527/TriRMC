@@ -300,6 +300,30 @@ test('P3→v7 flip：段 3/8 默认 spawn script（CEO v7 任务书·env =0 回 
 
 
 
+
+test('dce 执行开关：未设 DCE_EXECUTE → argv 无 --execute（dry_run 照旧·门拒）', () => {
+  const old = process.env.DCE_EXECUTE;
+  delete process.env.DCE_EXECUTE;
+  try {
+    const argv = STAGES.find((s) => s.name === 'dce')!.argv({ runDir: 'R', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, 'R');
+    assert.ok(!argv.includes('--execute'));
+  } finally {
+    if (old !== undefined) process.env.DCE_EXECUTE = old;
+  }
+});
+
+test('dce 执行开关：DCE_EXECUTE=1 → argv 含 --execute（授权真跑）', () => {
+  const old = process.env.DCE_EXECUTE;
+  process.env.DCE_EXECUTE = '1';
+  try {
+    const argv = STAGES.find((s) => s.name === 'dce')!.argv({ runDir: 'R', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, 'R');
+    assert.ok(argv.includes('--execute'));
+  } finally {
+    if (old === undefined) delete process.env.DCE_EXECUTE;
+    else process.env.DCE_EXECUTE = old;
+  }
+});
+
 test('c3 双修 B：gateStageResult inner score.verdict 优先（inner fail + 顶层 pass → 拒）', () => {
   const d = mkdtempSync(path.join(os.tmpdir(), 'c3-gate-'));
   writeFileSync(path.join(d, 'score.json'),

@@ -138,8 +138,11 @@ export const STAGES: StageDef[] = [
   },
   {
     name: 'dce', script: 'dce_steps.py', output: 'dce.json',
+    // dce 执行开关（CEO 2026-11-24 17:5x 批「dce 开关和授权窗都开」）：DCE_EXECUTE=1 才真跑·
+    // 默认 dry_run 保持（安全；dry_run 面 verdict=dry_run_not_executed → 段门拒止链）。
     argv: (p) => ['--tmv-root', p.tmvRoot, '--plan-file', path.join(p.runDir, 'plan.json'),
-      '--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId],
+      '--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
+      ...(process.env.DCE_EXECUTE === '1' ? ['--execute'] : [])],
   },
   {
     name: 'verify', script: 'verify.py', output: 'verify.json',

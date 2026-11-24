@@ -349,6 +349,20 @@ test('c3 双修 B：inner pass + 顶层 fail → 放行（inner 优先·旧件�
   assert.equal(gateStageResult({ name: 'score', output: 'score.json' }, d2).ok, false);
 });
 
+
+test('v8 item4：close run_state=partial（七席未齐）→ 止链不发 notify_done', async () => {
+  const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-item4-'));
+  const b = greenBehavior(runDir);
+  b.close_skill = { write: path.join(runDir, 'close.json'), body: '{"run_state":"partial"}' };
+  const tc = stubAll(b);
+  const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+  const r = await runner.run({ runDir, runId: 'i4', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+  assert.equal(r.ok, false);
+  assert.equal(r.failed_stage, 'close_skill');
+  assert.match(String(r.err), /不发 notify_done/);
+  assert.ok(!existsSync(path.join(runDir, 'notify_done.json')));   // notify 不触
+});
+
 test('charter 1/2/5 段门：dce 非 pass（rc0·dry_run_not_executed）→止链·failed_stage=dce·不 notify', async () => {
   const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate-'));
   const b = greenBehavior(runDir);

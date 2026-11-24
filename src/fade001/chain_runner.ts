@@ -287,6 +287,18 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
         // stdout JSON 重定向族（preflight/qualify·CLI 头注承录形）——本件落卷
         writeFileSync(path.join(runDir, st.output), (r.stdout ?? '') , 'utf8');
       }
+      // v8 item4（CEO 批）：close 后读 run_state——partial（七席未齐）→ 不发 notify_done（止链）
+      if (st.name === 'close_skill') {   // v8 item4：close.json 属 close_skill 段产物
+        try {
+          const cdoc = JSON.parse(readFileSync(path.join(runDir, st.output), 'utf8')) as Record<string, unknown>;
+          if (String(cdoc.run_state) === 'partial') {
+            return {
+              ok: false, run_dir: runDir, aggregate: {}, failed_stage: 'close_skill',
+              err: '段 8(close_skill) partial（七席未齐·v8 item4）——不发 notify_done（cpo-1 同形）',
+            };
+          }
+        } catch { /* close.json 坏=后续段门兜底 */ }
+      }
       // ── charter 1/2/5 段门（CTO spec·CEO 批）：非 pass=止链+不 notify（后半段自然不触）──
       if (chainGateStrict()) {
         const g = gateStageResult(st, runDir);

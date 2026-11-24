@@ -301,12 +301,16 @@ test('P3→v7 flip：段 3/8 默认 spawn script（CEO v7 任务书·env =0 回 
 
 
 
-test('dce 执行开关：未设 DCE_EXECUTE → argv 无 --execute（dry_run 照旧·门拒）', () => {
+test('dce argv 两参（A 案）：dry_run 态含 --start-date/--operating-root 且无 --execute', () => {
   const old = process.env.DCE_EXECUTE;
   delete process.env.DCE_EXECUTE;
   try {
     const argv = STAGES.find((s) => s.name === 'dce')!.argv({ runDir: 'R', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, 'R');
     assert.ok(!argv.includes('--execute'));
+    const si = argv.indexOf('--start-date');
+    assert.ok(si !== -1 && argv[si + 1] === '2026-01-05');
+    const oi = argv.indexOf('--operating-root');
+    assert.ok(oi !== -1 && argv[oi + 1] === path.join('T', 'docs/workflow/operating-records'));
   } finally {
     if (old !== undefined) process.env.DCE_EXECUTE = old;
   }
@@ -318,6 +322,7 @@ test('dce 执行开关：DCE_EXECUTE=1 → argv 含 --execute（授权真跑）'
   try {
     const argv = STAGES.find((s) => s.name === 'dce')!.argv({ runDir: 'R', runId: 'I', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, 'R');
     assert.ok(argv.includes('--execute'));
+    assert.ok(argv.includes('--start-date') && argv.includes('--operating-root'));   // A 案两参全
   } finally {
     if (old === undefined) delete process.env.DCE_EXECUTE;
     else process.env.DCE_EXECUTE = old;

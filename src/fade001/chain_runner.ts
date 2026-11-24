@@ -140,8 +140,11 @@ export const STAGES: StageDef[] = [
     name: 'dce', script: 'dce_steps.py', output: 'dce.json',
     // dce 执行开关（CEO 2026-11-24 17:5x 批「dce 开关和授权窗都开」）：DCE_EXECUTE=1 才真跑·
     // 默认 dry_run 保持（安全；dry_run 面 verdict=dry_run_not_executed → 段门拒止链）。
+    // A 案（CTO 2026-11-24 18:09·CEO 批）：补 --start-date/--operating-root（与 verify 段同形·
+    // 缺之=migrate cmd 渲染缺参 rc=2 根因）
     argv: (p) => ['--tmv-root', p.tmvRoot, '--plan-file', path.join(p.runDir, 'plan.json'),
       '--from-week', p.fromWeek, '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId,
+      '--start-date', p.startDate, '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'),
       ...(process.env.DCE_EXECUTE === '1' ? ['--execute'] : [])],
   },
   {

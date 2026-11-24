@@ -150,8 +150,9 @@ export const STAGES: StageDef[] = [
   {
     name: 'verify', script: 'verify.py', output: 'verify.json',
     // --operating-root/--start-date 同族必传（verify.py L272/L275 相对缺省同坑·第八发乘机扫毕预判 2026-11-21）
+    // v8 item1：--strict 必填随行（verify 强制严格形·argv 与 parser 同 commit）
     argv: (p) => ['--plan-file', path.join(p.runDir, 'plan.json'), '--from-week', p.fromWeek,
-      '--to-week', p.toWeek, '--run-dir', p.runDir,
+      '--to-week', p.toWeek, '--run-dir', p.runDir, '--run-id', p.runId, '--strict',
       '--operating-root', path.join(p.tmvRoot, 'docs/workflow/operating-records'), '--start-date', p.startDate],
   },
   {

@@ -107,7 +107,11 @@ export interface FlagVolume {
 
 /** runner 状态卷面（round-queue/state/runner-state.json） */
 export interface RunnerState {
-  round_count: number;                     // FUSE 计数域（D1 §四：同根缺陷连续+1·test/prod 两计数不混——本域=sprint 轮计数）
+  // A 件（CTO 设计稿 99d8c1343 §一·CEO 批 2026-11-24）：round_count=累计运行轮次（统计域·永不重置·含 debug/resume）·不再做 FUSE 判据；
+  // FUSE 判据改 test_consecutive_rounds（test 态连续进化计数·退出/回 test 与点火新窗清 0）。
+  round_count: number;                     // 累计运行轮次（统计域·永不重置）
+  /** A 件：test 态连续进化计数（FUSE 判据域·缺省 0） */
+  test_consecutive_rounds?: number;
   // ── #16 / DP-20261123-009 runId 贯穿 round 层（CTO 技术形卷 e9fb4dddc §三.1·2026-11-23）──
   // runId 根=COS 签发（launcher 外部注入式）·链层已有·本字段补轮层持久化（恢复锚/回执归属/trend 关联）。
   run_id?: string | null;
@@ -272,6 +276,13 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
   let params = ignite.params;
   // #16（DP-009·CTO e9fb4dddc）：链层 runId 注入轮态（老 state 无此字段=宽容补写·随既有 writeRunnerState 落盘）
   st.run_id = (params.run_id as string | undefined) ?? null;
+  // A 件 ③b：点火新窗——flag≠test 清连续计数并持久化（test 窗保留续算·E2/E3 转换后已清）
+  if (readFlag(io).flag !== 'test') {
+    if ((st.test_consecutive_rounds ?? 0) !== 0) {
+      st.test_consecutive_rounds = 0;
+      writeRunnerState(io, st);   // 清写持久化（否则终态读回暖态）
+    }
+  }
 
   // 起跑前置检查位（D6 gate 接线·gate=ready 方可入轮——D7 验证段四锚承录）
   // A1-A4 状态采集喂入：采集位=调用面（值席起跑前采集）·runner 只透传零判读（勘面卷 §三.4 承）
@@ -301,11 +312,12 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     // ── v7 轮末钩（CTO ce26401a9·loop 层）：十段全毕 → 七席联审（两对象）→opinions→生成器→pending ──
     await runJointReviewHook(io, st, params);
     if (verdict === 'loop_exit') {                               // 联审均分≥95（≥95 含边界）
+      st.test_consecutive_rounds = 0;   // A 件 ③b：退出 test 清连续计数
       setFlag(io, 'prod', `run:${run.run_dir}`);                 // 唯一程序自动边（EXIT2·sanctioned）
       return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
     }
     // DP-027 ⓑ（CTO 裁）：M9 FUSE 按态收窄——仅 test 态熔断；debug 不熔断（审批步 M4-v2 节流为界·如实注）；prod 不入 loop（起跑拦截既有）
-    if (flagVol.flag === 'test' && st.round_count >= FUSE_MAX_ROUNDS) {   // ①8 轮 FUSE（7→8 边界=F-2 钉）
+    if (flagVol.flag === 'test' && (st.test_consecutive_rounds ?? 0) >= FUSE_MAX_ROUNDS) {   // ①8 轮 FUSE（7→8 边界=F-2 钉）
       st.fuse_marker = true;
       writeRunnerState(io, st);                                  // 熔断停候 CEO（fuse.marker+pending 冻结）
       return { exit: { kind: 'fuse', detail: `FUSE 熔断（round_count=${st.round_count}>=${FUSE_MAX_ROUNDS}）候 CEO` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
@@ -345,6 +357,9 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     // 铸件族窗 clear-write 修形（CTO 裁·2026-11-22 A 部署）：resume 轮毕清写——防放行态下二次点火
     // 陈旧 resume_stage 静默跳段（三形态实锤：continue 轮毕不清→同段重复→FUSE）。写前清=fail-safe 形。
     st.resume_stage = null;
+    if (flagVol.flag === 'test') {   // A 件 ③a：test 态每轮完成连续计数 +1
+      st.test_consecutive_rounds = (st.test_consecutive_rounds ?? 0) + 1;
+    }
     st.round_count += 1;
     writeRunnerState(io, st);
     rounds += 1;

@@ -173,9 +173,9 @@ describe('F-2 四支路由', () => {
     assert.strictEqual(calls.length, 1);
   });
 test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async () => {
-  // ① test 态 round>=8 → 熔断
+  // ① test 态连续>=8 → 熔断
   seedFlag({ flag: 'test' });
-  seedState({ round_count: 8 });
+  seedState({ round_count: 8, test_consecutive_rounds: 8 });
   {
     const { runner } = makeRunner([{ verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'm9a' } });
@@ -213,7 +213,7 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
 
   it('F-2e FUSE 7→8 边界钉：初值 7 第一轮推进（7→8 不熔）·第二轮毕 8>=8 熔断', async () => {
     seedFlag({ flag: 'test' });   // DP-038：显式 test 态
-    seedState({ round_count: 7 });
+    seedState({ round_count: 7, test_consecutive_rounds: 7 });   // A 件：连续计数种子
     const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'e1' } });
     assert.strictEqual(out.exit?.kind, 'fuse');
@@ -225,7 +225,7 @@ test('DP-027 ⓑ M9 三态：test 熔断 / debug 不熔断 / prod 拦截', async
   });
   it('F-2e2 FUSE 即熔：初值 8 第一轮毕即熔', async () => {
     seedFlag({ flag: 'test' });   // DP-038：显式 test 态
-    seedState({ round_count: 8 });
+    seedState({ round_count: 8, test_consecutive_rounds: 8 });   // A 件：连续计数种子
     const { runner, calls } = makeRunner([{ verdict: 'continue' }]);
     const out = await runLoop(makeIo(root, runner), { params: { run_id: 'e2' } });
     assert.strictEqual(out.exit?.kind, 'fuse');
@@ -258,12 +258,59 @@ test('DP-037/T5 rounds_started 上报面：链中fail轮计入尝试数（rounds
 
 test('DP-037/T5 fuse 即熔：rounds_started 亦计入（attempted=1）', async () => {
   seedFlag({ flag: 'test' });
-  seedState({ round_count: 8 });
+  seedState({ round_count: 8, test_consecutive_rounds: 8 });
   const { runner } = makeRunner([{ verdict: 'continue' }]);
   const out = await runLoop(makeIo(root, runner), { params: { run_id: 't5b' } });
   assert.strictEqual(out.exit?.kind, 'fuse');
   assert.strictEqual(out.rounds_run, 0);
   assert.strictEqual(out.rounds_started, 1);
+});
+
+
+test('A 件 FUSE 判据：test 连续计数>=8 熔断（round_count 小亦熔=新判据生效）', async () => {
+  seedFlag({ flag: 'test' });
+  seedState({ round_count: 3, test_consecutive_rounds: 8 });
+  const { runner } = makeRunner([{ verdict: 'continue' }]);
+  const out = await runLoop(makeIo(root, runner), { params: { run_id: 'a1' } });
+  assert.strictEqual(out.exit?.kind, 'fuse');
+});
+
+test('A 件 判据=连续计数非 round_count：round_count=100 仅计数 7 → 第 2 轮回合才熔', async () => {
+  seedFlag({ flag: 'test' });
+  seedState({ round_count: 100, test_consecutive_rounds: 7 });
+  const { runner, calls } = makeRunner([{ verdict: 'continue' }]);
+  const out = await runLoop(makeIo(root, runner), { params: { run_id: 'a2' } });
+  assert.strictEqual(out.exit?.kind, 'fuse');       // 计数达 8 才熔（round_count 100 未提前熔）
+  assert.strictEqual(out.rounds_run, 1);            // 仅完成 1 轮（第 2 轮判前熔）
+  assert.strictEqual(readRunnerState(makeIo(root, runner)).round_count, 101);   // 累计照常
+});
+
+test('A 件 E2 回 test=新连续周期：旧计数清 0 后需满 8 新轮才熔', async () => {
+  seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+  seedState({ round_count: 4, test_consecutive_rounds: 5 });
+  seedRuling('terminate', 'a3');
+  const { runner } = makeRunner([{ verdict: 'continue' }]);
+  await runLoop(makeIo(root, runner), { params: { run_id: 'a3' } });   // debug 点火面清计数=0
+  assert.strictEqual(readRunnerState(makeIo(root, runner)).test_consecutive_rounds, 0);
+  setFlag(makeIo(root, runner), 'test', 'CEO令:e2');                   // 回 test
+  const { runner: runner2 } = makeRunner([{ verdict: 'continue' }]);
+  const out = await runLoop(makeIo(root, runner2), { params: { run_id: 'a3b' } });
+  assert.strictEqual(out.exit?.kind, 'fuse');
+  assert.strictEqual(out.rounds_run, 8);            // 8 个新轮（非继承 5→3 轮）
+  const st = readRunnerState(makeIo(root, runner2));
+  assert.strictEqual(st.test_consecutive_rounds, 8);
+  assert.strictEqual(st.round_count, 12);           // 累计 4+1(debug)+7? → 仅 test 轮计 8 → 4+8=12
+});
+
+test('A 件 round_count 累计语义：debug 轮亦累计·连续计数不动', async () => {
+  seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
+  seedState({ round_count: 10, test_consecutive_rounds: 0 });
+  seedRuling('continue', 'a4');                     // 首轮 continue 完成→计数；次轮裁决已消费→absent 挂起
+  const { runner } = makeRunner([{ verdict: 'continue' }, { verdict: 'continue' }]);
+  await runLoop(makeIo(root, runner), { params: { run_id: 'a4' } });
+  const st = readRunnerState(makeIo(root, runner));
+  assert.strictEqual(st.round_count, 11);           // debug 轮累计（terminate 轮不计数=既有语义）
+  assert.strictEqual(st.test_consecutive_rounds, 0);// 非 test 不涨
 });
 
 test('DP-038/T4 ①缺省=debug：无 flag.json → readFlag=debug（不再 test 直进）', () => {
@@ -587,7 +634,8 @@ describe('GD 护栏随铸（D-46/D-47 白盒）', () => {
     assert.strictEqual(existsSync(path.join(root, 'state', 'runner-state.json')), false);
     const keys = Object.keys(out.final_state);
     // DP-009 #16：run_id 入白名单（非密值·派工锚·CTO e9fb4dddc §二关联行）——余键仍零承载
-    assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker', 'run_id'].includes(k)));  // 白名单域外零承载
+    // A 件：test_consecutive_rounds 入白名单（非密值·FUSE 判据域）
+    assert.ok(keys.every((k) => ['round_count', 'resume_stage', 'fuse_marker', 'run_id', 'test_consecutive_rounds'].includes(k)));  // 白名单域外零承载
     assert.strictEqual('brief' in out.final_state, false);        // 呈报载荷走 exit detail 投影面零入 state
   });
 });

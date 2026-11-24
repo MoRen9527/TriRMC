@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 
-import { STAGES, makeChainRunner, SPAWN_STAGE_TIMEOUT_MS, appendPyPath } from '../../src/fade001/chain_runner.js';
+import { STAGES, makeChainRunner, SPAWN_STAGE_TIMEOUT_MS, appendPyPath, gateStageResult } from '../../src/fade001/chain_runner.js';
 
 const PY = process.platform === 'win32' ? 'python' : 'python3';
 
@@ -298,6 +298,27 @@ test('P3→v7 flip：段 3/8 默认 spawn script（CEO v7 任务书·env =0 回 
   assert.equal(STAGES[7].script, 'close_skill_spawn.py');
 });
 
+
+
+test('c3 双修 B：gateStageResult inner score.verdict 优先（inner fail + 顶层 pass → 拒）', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'c3-gate-'));
+  writeFileSync(path.join(d, 'score.json'),
+    JSON.stringify({ verdict: 'pass', score: { verdict: 'fail' } }), 'utf8');
+  const g = gateStageResult({ name: 'score', output: 'score.json' }, d);
+  assert.equal(g.ok, false);                       // inner 优先
+  assert.match(String(g.detail), /inner/);
+});
+
+test('c3 双修 B：inner pass + 顶层 fail → 放行（inner 优先·旧件兼容回落）', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'c3-gate2-'));
+  writeFileSync(path.join(d, 'score.json'),
+    JSON.stringify({ verdict: 'fail', score: { verdict: 'pass' } }), 'utf8');
+  assert.equal(gateStageResult({ name: 'score', output: 'score.json' }, d).ok, true);
+  // 旧件形（无 score 嵌层）回落顶层
+  const d2 = mkdtempSync(path.join(os.tmpdir(), 'c3-gate3-'));
+  writeFileSync(path.join(d2, 'score.json'), JSON.stringify({ verdict: 'fail' }), 'utf8');
+  assert.equal(gateStageResult({ name: 'score', output: 'score.json' }, d2).ok, false);
+});
 
 test('charter 1/2/5 段门：dce 非 pass（rc0·dry_run_not_executed）→止链·failed_stage=dce·不 notify', async () => {
   const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate-'));

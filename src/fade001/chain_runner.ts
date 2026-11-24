@@ -50,11 +50,17 @@ export function gateStageResult(stage: { name: string; output: string }, runDir:
   if (!existsSync(p)) return { ok: true, detail: 'no output (gate skip)' };
   try {
     const doc = JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>;
-    if (!doc || typeof doc !== 'object' || !('verdict' in doc)) {
+    if (!doc || typeof doc !== 'object') {
+      return { ok: true, detail: 'non-object (gate skip)' };
+    }
+    // c3 双修 B（CTO 令 2026-11-24）：inner score.verdict 优先（score.json=score 段嵌套形）·旧件兼容回落顶层
+    const inner = (doc.score && typeof doc.score === 'object' && 'verdict' in (doc.score as Record<string, unknown>))
+      ? (doc.score as Record<string, unknown>).verdict : undefined;
+    if (inner === undefined && !('verdict' in doc)) {
       return { ok: true, detail: 'no verdict key (gate skip)' };
     }
-    const v = String(doc.verdict);
-    return { ok: v === 'pass', detail: `verdict=${v}`, verdict: v };
+    const v = String(inner ?? doc.verdict);
+    return { ok: v === 'pass', detail: `verdict=${v}${inner !== undefined ? ' (inner)' : ''}`, verdict: v };
   } catch {
     return { ok: true, detail: 'unparsable (gate skip·解析面归 parse 加固件)' };
   }

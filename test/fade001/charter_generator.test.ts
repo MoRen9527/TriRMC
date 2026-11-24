@@ -135,17 +135,18 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     assert.deepEqual(res.rejects[0].missing, ['owner_seat']);
   });
 
-  it('族归并≤5：同 title+target 去重·超 5 截断留痕', () => {
+  it('v8 item12 全纳：每席直提条数不限（7 件全进·dropped=去重合并报告）', () => {
     const ops = [];
     for (let i = 0; i < 6; i += 1) ops.push(okOpinion(`R10-N-0${i}`));
-    // 同 title+target 重复件（与首件同标题·模拟族内重复意见）→ 去重
-    const dup = { ...okOpinion('R10-N-00'), opinion_id: 'R10-DUP-01' };
-    const res = generateCharter(baseDoc([...ops, dup]), { date: '20261124' });   // 7 件→去重 6→截 5
+    const dup = { ...okOpinion('R10-N-00'), opinion_id: 'R10-DUP-01' };   // 同 title+target 重复件
+    const res = generateCharter(baseDoc([...ops, dup]), { date: '20261124' });
     assert.equal(res.ok, true);
-    const agg = (res.charter as unknown as { aggregation: { items_included: number; dropped: string[] } }).aggregation;
-    assert.equal(res.charter!.items.length, 5);
-    assert.equal(agg.items_included, 5);
-    assert.equal(agg.dropped.length, 1);                       // 7-去重1-截5=1
+    const agg = (res.charter as unknown as { aggregation: { items_included: number; dropped: Array<{ opinion_id: string; title: string }> } }).aggregation;
+    assert.equal(res.charter!.items.length, 6);                // 全纳（去重后 6·非前 5）
+    assert.equal(agg.items_included, 6);
+    assert.equal(agg.dropped.length, 1);                       // 仅去重合并报告
+    assert.equal(agg.dropped[0].opinion_id, 'R10-DUP-01');     // 可溯源二字段
+    assert.ok(agg.dropped[0].title);
   });
 
   it('低分维未覆盖：lenient=warn 仍生成·strict=拒', () => {

@@ -123,16 +123,20 @@ export function generateCharter(
 
   // ── T1②（任务书 v2·R5/R16/R18）：族归并 ≤5 条/轮 + 低分维覆盖校验（两级形·D3）──
   const itemsBefore = items.length;
-  // 去重：同 (title,target) 视为同族重复意见 → 合一件
+  // 去重：同 (title,target) 视为同族重复意见 → 合一件（v8 item12：全纳重写——条数不限）
   const seen = new Set<string>();
+  const mergedReport: Array<{ opinion_id: string; title: string }> = [];
   const deduped = items.filter((it) => {
     const k = `${it.title}|${it.target}`;
-    if (seen.has(k)) return false;
+    if (seen.has(k)) {
+      mergedReport.push({ opinion_id: it.opinion_id, title: it.title });   // 去重合并可溯源（原 opinion_id/title）
+      return false;
+    }
     seen.add(k);
     return true;
   });
-  const dropped = deduped.slice(5).map((it) => it.title);
-  const capped = deduped.slice(0, 5);
+  const capped = deduped;          // v8 item12（CEO 批）：每席直提条数不限——全纳
+  const dropped = mergedReport;    // 语义改=仅「去重合并报告」（{opinion_id,title}·非截断清单）
   // 低分维覆盖：opinions[].scores 中 <60 的维，须被任一件 target/covered_dims 覆盖
   const lowDims: string[] = [];
   for (const o of doc.opinions) {

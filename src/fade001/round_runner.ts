@@ -299,6 +299,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
       return {
         exit: { kind: 'failed', detail: `activation gate blocked（unmet=${(v.unmet ?? []).join(',')}）——起跑门闭 fail-closed` },
         rounds_run: 0,
+        rounds_started: 0,
         final_state: st,
       };
     }
@@ -342,6 +343,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
             detail: `首轮毕知情停点（state=${frp.state}·authority_ref=${frp.authority_ref ? '在' : '缺'}）——停面候 CEO 知情放行${plainLine ? `｜${plainLine}` : ''}`,
           },
           rounds_run: rounds,
+          rounds_started: rounds,
           final_state: st,
         };
       }

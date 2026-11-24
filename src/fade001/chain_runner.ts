@@ -291,7 +291,9 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
       if (st.name === 'close_skill') {   // v8 item4：close.json 属 close_skill 段产物
         try {
           const cdoc = JSON.parse(readFileSync(path.join(runDir, st.output), 'utf8')) as Record<string, unknown>;
-          if (String(cdoc.run_state) === 'partial') {
+          // v8 ③（SDE 定谳·CTO 令）：seven_seats.ok=True（TC 已权威判过）=不因席自判 partial 停链
+          const _ssOk = !!(cdoc.seven_seats && (cdoc.seven_seats as Record<string, unknown>).ok);
+          if (String(cdoc.run_state) === 'partial' && !_ssOk) {
             return {
               ok: false, run_dir: runDir, aggregate: {}, failed_stage: 'close_skill',
               err: '段 8(close_skill) partial（七席未齐·v8 item4）——不发 notify_done（cpo-1 同形）',

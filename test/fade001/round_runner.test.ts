@@ -285,21 +285,21 @@ test('A 件 判据=连续计数非 round_count：round_count=100 仅计数 7 →
   assert.strictEqual(readRunnerState(makeIo(root, runner)).round_count, 101);   // 累计照常
 });
 
-test('A 件 E2 回 test=新连续周期：旧计数清 0 后需满 8 新轮才熔', async () => {
-  seedFlag({ flag: 'debug', authority_ref: 'CEO令:x' });
-  seedState({ round_count: 4, test_consecutive_rounds: 5 });
-  seedRuling('terminate', 'a3');
-  const { runner } = makeRunner([{ verdict: 'continue' }]);
-  await runLoop(makeIo(root, runner), { params: { run_id: 'a3' } });   // debug 点火面清计数=0
-  assert.strictEqual(readRunnerState(makeIo(root, runner)).test_consecutive_rounds, 0);
-  setFlag(makeIo(root, runner), 'test', 'CEO令:e2');                   // 回 test
+test('A 件 E2 真路径：setFlag→test 即清 0 并持久化（需满 8 新轮才熔）', async () => {
+  // 旧态：prod 前遗留计数 7（若不清=同链首轮即达 8 熔断早发）
+  seedFlag({ flag: 'prod' });
+  seedState({ round_count: 4, test_consecutive_rounds: 7 });
+  const io = makeIo(root, makeRunner([]).runner);
+  const st = readRunnerState(io);
+  setFlag(io, 'test', 'CEO令:e2', st);              // E2 真路径（带 st）
+  assert.strictEqual(readRunnerState(io).test_consecutive_rounds, 0);   // 即清+持久化
   const { runner: runner2 } = makeRunner([{ verdict: 'continue' }]);
   const out = await runLoop(makeIo(root, runner2), { params: { run_id: 'a3b' } });
   assert.strictEqual(out.exit?.kind, 'fuse');
-  assert.strictEqual(out.rounds_run, 8);            // 8 个新轮（非继承 5→3 轮）
-  const st = readRunnerState(makeIo(root, runner2));
-  assert.strictEqual(st.test_consecutive_rounds, 8);
-  assert.strictEqual(st.round_count, 12);           // 累计 4+1(debug)+7? → 仅 test 轮计 8 → 4+8=12
+  assert.strictEqual(out.rounds_run, 8);            // 自 0 起满 8 新轮（非继承 7→1 轮）
+  const st2 = readRunnerState(makeIo(root, runner2));
+  assert.strictEqual(st2.test_consecutive_rounds, 8);
+  assert.strictEqual(st2.round_count, 12);          // 4+8 累计
 });
 
 test('A 件 round_count 累计语义：debug 轮亦累计·连续计数不动', async () => {

@@ -200,7 +200,8 @@ export function ensureFlagInit(io: RoundRunnerIo): void {
 }
 
 /** set_flag（D1 §二：手动切换必载 authority_ref 无 ref=拒绝 fail-closed·EXIT≥95 程序边=唯一自动写面） */
-export function setFlag(io: RoundRunnerIo, flag: FlagState, authorityRef: string | null): void {
+export function setFlag(io: RoundRunnerIo, flag: FlagState, authorityRef: string | null,
+                        st?: RunnerState): void {
   if (authorityRef === null || !String(authorityRef).trim()) {
     throw new Error('set_flag 拒绝：authority_ref 必载（CEO 切换权 fail-closed·无 ref=拒绝）');
   }
@@ -208,6 +209,11 @@ export function setFlag(io: RoundRunnerIo, flag: FlagState, authorityRef: string
   mkdirSync(dir, { recursive: true });
   const vol: FlagVolume = { flag, authority_ref: String(authorityRef), switched_at: io.nowIso() };
   writeFileSync(path.join(dir, 'flag.json'), JSON.stringify(vol, null, 2) + '\n', 'utf8');
+  // A 件 ③b/⑤（CTO 2026-11-24 补·DCA 首案）：转 test（E2 真路径）=新连续周期——清计数并持久化
+  if (st && flag === 'test') {
+    st.test_consecutive_rounds = 0;
+    writeRunnerState(io, st);
+  }
 }
 
 export function readRunnerState(io: RoundRunnerIo): RunnerState {

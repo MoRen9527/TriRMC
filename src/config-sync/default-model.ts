@@ -23,7 +23,7 @@ import type { BundleModel } from './types.js';
 // ── 兜底常量位（旧名唯一允许位置；trimodel registry 向后兼容别名）──
 
 export const DEFAULT_MODEL_FALLBACK = 'deepseek-v4-pro';
-export const FLASH_MODEL_FALLBACK = 'deepseek-v4-flash';
+export const FLASH_MODEL_FALLBACK = 'deepseek-flash';   // 上游实名（/models 实读=['deepseek-flash','deepseek-v4-pro']·CTO 令 2026-11-25）
 
 // ── model.json 读取（mtime 轻缓存，TTL ≤ 10s）──
 

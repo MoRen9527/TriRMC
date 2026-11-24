@@ -77,7 +77,7 @@ describe('resolveFlashModel flash 变体', () => {
 
   it('无 flash 别名 → 兜底常量（零回归面）', async () => {
     assert.equal(await resolveFlashModel(configDir), FLASH_MODEL_FALLBACK);
-    assert.equal(FLASH_MODEL_FALLBACK, 'deepseek-v4-flash');
+    assert.equal(FLASH_MODEL_FALLBACK, 'deepseek-flash');   // 上游实名（CTO 令 2026-11-25）
     await writeModelDim({
       defaultModel: 'tmv-deepseek-v4-pro',
       catalog: [{ id: 'tmv-deepseek-v4-pro', provider: 'deepseek', capabilities: ['chat'] }],

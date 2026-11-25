@@ -375,6 +375,41 @@ test('v8 run_state 权威化：seven_seats.ok=true 时席自判 partial 不停�
   assert.ok(!(r.failed_stage === 'close_skill'), 'seven_seats.ok=>不停链');
 });
 
+
+test('T2b：chain journal 落卷（chain_start/阶段/chain_end + D-91 marker 痕）', async () => {
+  const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-t2b-'));
+  const b = greenBehavior(runDir);
+  const tc = stubAll(b);
+  const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+  const r = await runner.run({ runDir, runId: 't2b', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+  assert.equal(r.ok, true);
+  const jp = path.join(runDir, 'chain-journal.jsonl');
+  assert.ok(existsSync(jp));
+  const lines = readFileSync(jp, 'utf8').trim().split(String.fromCharCode(10)).map((x) => JSON.parse(x));
+  const events = lines.map((x) => x.event);
+  assert.ok(events.includes('chain_start'));
+  assert.ok(events.includes('stage_ok'));
+  assert.ok(events.includes('chain_end'));
+  const st = lines.find((x) => x.event === 'chain_start');
+  assert.ok(st.d91_marker);                       // D-91 禁推 marker 痕（absent/unknown 记录）
+  const end = lines.find((x) => x.event === 'chain_end');
+  assert.equal(end.ok, true);
+});
+
+test('T2b：close partial 止链 → journal chain_end ok=false（failed_stage=close_skill）', async () => {
+  const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-t2b2-'));
+  const b = greenBehavior(runDir);
+  b.close_skill = { write: path.join(runDir, 'close.json'), body: '{"run_state":"partial"}' };
+  const tc = stubAll(b);
+  const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+  const r = await runner.run({ runDir, runId: 't2b2', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+  assert.equal(r.ok, false);
+  const lines = readFileSync(path.join(runDir, 'chain-journal.jsonl'), 'utf8').trim().split(String.fromCharCode(10)).map((x) => JSON.parse(x));
+  const end = lines.find((x) => x.event === 'chain_end');
+  assert.equal(end.ok, false);
+  assert.equal(end.failed_stage, 'close_skill');
+});
+
 test('charter 1/2/5 段门：dce 非 pass（rc0·dry_run_not_executed）→止链·failed_stage=dce·不 notify', async () => {
   const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate-'));
   const b = greenBehavior(runDir);

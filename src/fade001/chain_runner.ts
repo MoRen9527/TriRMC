@@ -34,6 +34,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { ChainRunner, RoundParams, RunResult } from './round_runner.js';
+import { chainRefInfo } from './chain_marker.js';
 
 /** 段特有参数面（白名单构造 argv 用·零瞎传） */
 /** charter 1/2/5（CTO spec d8582717f·CEO 批 2026-11-24）：段门语义统一——
@@ -225,6 +226,15 @@ function projectVerdict(runDir: string): { ok: boolean; average?: number; verdic
  * 十段链段序驱动器（D1 §四装配判读面照铸·ChainRunner 注入实现形）。
  * resumeStage=N → 从段 N 起跑（段 1..N-1 产物真值前置断言全在·缺=fail 零静默跳段）。
  */
+/** T2b（任务书 e0dfa6481）：chain journal 落卷（审批链动作审计面）——
+    run_dir/chain-journal.jsonl 逐行 JSON（chain_start/stage_ok/stage_fail/gate_fail/approval_chain/chain_end）。 */
+function appendChainJournal(runDir: string, entry: Record<string, unknown>): void {
+  try {
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + String.fromCharCode(10);
+    writeFileSync(path.join(runDir, 'chain-journal.jsonl'), line, { flag: 'a', encoding: 'utf8' });
+  } catch { /* 卷面零阻断 */ }
+}
+
 export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stagesRun: string[] } {
   const py = paths.pythonBin ?? 'python3';
   const timeoutMs = paths.stageTimeoutMs ?? 900_000;
@@ -236,6 +246,13 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
     const runDir = String(p.runDir ?? '');
     if (!runDir) return { ok: false, run_dir: '', aggregate: {}, err: 'params.runDir 缺——链驱动零起跑 fail-closed' };
     mkdirSync(runDir, { recursive: true });
+    // T2b：chain journal 起笔 + D-91 禁推 marker 卷面痕（absent/running/stale 三态记录）
+    let _d91: Record<string, unknown> = { state: 'unknown' };
+    try {
+      const _bare = process.env.TRICO_BARE_REPO ?? process.env.FADE_BARE_REPO;
+      if (_bare) _d91 = { state: chainRefInfo(_bare).state };
+    } catch { _d91 = { state: 'check-failed' }; }
+    appendChainJournal(runDir, { event: 'chain_start', run_id: p.run_id, resume_stage: resumeStage, d91_marker: _d91 });
 
     for (let i = 0; i < STAGES.length; i++) {
       const st = STAGES[i];
@@ -267,10 +284,23 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
         env: { ...process.env, PYTHONPATH: appendPyPath(process.env.PYTHONPATH, paths.triCompanyRoot) },
       });
       stagesRun.push(st.name);
+      if (r.status === 0) {
+        appendChainJournal(runDir, { event: 'stage_ok', stage: st.name });
+        if (st.name === 'preflight') {
+          // T2b：D-88 审批链面——preflight 的 ceo_ruling 读数入卷（state/refusal）
+          try {
+            const pf = JSON.parse(readFileSync(path.join(runDir, st.output), 'utf8')) as Record<string, unknown>;
+            const cr = (pf.ceo_ruling ?? {}) as Record<string, unknown>;
+            appendChainJournal(runDir, { event: 'approval_chain', ruling_state: cr.state ?? null,
+              refusal: cr.refusal ?? null, prev_run: cr.prev_run_dir ?? null });
+          } catch { /* 读失败零阻断 */ }
+        }
+      }
       if (r.error) {
         return { ok: false, run_dir: runDir, aggregate: {}, err: `段 ${i + 1}(${st.name}) 进程错：${r.error.message.slice(0, ERR_TAIL)}` };
       }
       if (r.status !== 0) {
+        appendChainJournal(runDir, { event: 'stage_fail', stage: st.name, rc: r.status });
         // dce rc=3=halt_pending_ruling 候裁态（dce_steps.py 承录形）——投影关键词入 err·裁决面可判读
         const kind = st.name === 'dce' && r.status === 3 ? 'halt_pending_ruling（候 COS 裁决）' : '';
         // stdout 尾投影（CTO 裁点 a 形 19921b1e8·第六发 preflight 检查红读数丢面修笔捆排
@@ -294,6 +324,7 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
           // v8 ③（SDE 定谳·CTO 令）：seven_seats.ok=True（TC 已权威判过）=不因席自判 partial 停链
           const _ssOk = !!(cdoc.seven_seats && (cdoc.seven_seats as Record<string, unknown>).ok);
           if (String(cdoc.run_state) === 'partial' && !_ssOk) {
+            appendChainJournal(runDir, { event: 'chain_end', ok: false, failed_stage: 'close_skill' });
             return {
               ok: false, run_dir: runDir, aggregate: {}, failed_stage: 'close_skill',
               err: '段 8(close_skill) partial（七席未齐·v8 item4）——不发 notify_done（cpo-1 同形）',
@@ -305,6 +336,7 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
       if (chainGateStrict()) {
         const g = gateStageResult(st, runDir);
         if (!g.ok) {
+          appendChainJournal(runDir, { event: 'gate_fail', stage: st.name, detail: g.detail });
           return {
             ok: false,
             run_dir: runDir,
@@ -317,6 +349,7 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
     }
 
     const proj = projectVerdict(runDir);
+    appendChainJournal(runDir, { event: 'chain_end', ok: proj.ok, failed_stage: null });
     return {
       ok: proj.ok,
       run_dir: runDir,

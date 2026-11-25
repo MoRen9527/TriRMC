@@ -64,7 +64,7 @@ export interface CharterDraft {
   status: 'pending_approval';
   items: CharterItem[];
   auto_dispatch?: true;
-  aggregation?: { items_before?: number; items_included?: number; dropped?: unknown[]; excluded_status?: Array<{ opinion_id: string; status: string; reason: string }> };
+  aggregation?: { items_before?: number; items_included?: number; dropped?: unknown[]; excluded_status?: Array<{ opinion_id: string; status: string; reason: string }>; capability_items?: number; capability_ratio?: number };
 }
 
 export interface GenerateResult {
@@ -279,7 +279,7 @@ export function generateCharter(
 /** 从磁盘读 opinions.json 并生成（CLI/集成共用） */
 export function generateCharterFromFile(
   opinionsPath: string,
-  opts: { approver?: 'CEO' | 'COS'; date?: string; autoDispatch?: boolean } = {},
+  opts: { approver?: 'CEO' | 'COS'; date?: string; autoDispatch?: boolean; faces?: Record<string, unknown> } = {},
 ): GenerateResult {
   if (!existsSync(opinionsPath)) {
     return { ok: false, rejects: [], reason: `opinions 文件不存在: ${opinionsPath}` };

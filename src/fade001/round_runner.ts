@@ -24,7 +24,7 @@
 
 import { SPAWN_STAGE_TIMEOUT_MS, appendPyPath } from './chain_runner.js';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 export const FUSE_MAX_ROUNDS = 8;          // ①8 轮 FUSE 值面（D1 §一 L21 定谳值·边界案=F-2 7→8 钉）
@@ -557,11 +557,94 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
         JSON.stringify({ reason: 'A/B passed', gate: `a>${JOINT_GRADE_THRESHOLD} && b>${JOINT_GRADE_THRESHOLD}`, grade }, null, 2) + String.fromCharCode(10), 'utf8');
     } catch { /* 留痕面零阻断 */ }
     console.error(`[fade001:charter-hook] skipped: A/B passed (a=${String(grade.a)}, b=${String(grade.b)})`);
+    backfillFromJoint(runDir);
     return { grade, charter: 'skipped' as const };
   }
   await tryCharterHook(io, st, params);   // opinions.json → 生成器 → pending 写（P4 tie 位移后同链复用）
   _patchConsumption();
+  backfillFromJoint(runDir);
   return { grade, charter: 'attempted' as const };
+}
+
+/** 链后联审回填（CEO 批三层①技术面·2026-11-26·SDE 施工；形照 score backfill 族）：
+ *  joint-review.json 落卷后回填——①close.json：seven_seats（source='joint'·present/missing 实读）
+ *  +refill_summary（joint.refill 真值·items_consumed>0）；②score-skill.json：ab_columns
+ *  （按 faces dimensions a/b 各席均值）；③charter-*.json：只待办（refill 判 fixed 的 opinion 排除——
+ *  CEO 令「未结账禁入下轮」；charter_generator 当前无此过滤，generator 侧根治另件）。
+ *  幂等（重跑同值）/零炸（try 内 fail-open·stderr 留痕）。 */
+export function backfillFromJoint(runDir: string): void {
+  try {
+    const jrPath = path.join(runDir, 'joint-review.json');
+    if (!existsSync(jrPath)) return;
+    const jr = JSON.parse(readFileSync(jrPath, 'utf8')) as Record<string, unknown>;
+    const faces = ((jr.faces ?? {}) as Record<string, Record<string, unknown>>);
+    const SEATS7 = ['cos', 'coo', 'cao', 'cpo', 'cto', 'cho', 'cfo'];
+    const present = SEATS7.filter((s) => faces[s] && !faces[s].absent);
+    const missing = SEATS7.filter((s) => !(faces[s] && !faces[s].absent));
+    const rf = ((jr.refill ?? {}) as Record<string, unknown>);
+    const rfItems = Array.isArray(rf.items) ? (rf.items as Array<Record<string, unknown>>) : [];
+    // ① close.json：seven_seats + refill_summary 真值
+    const cp = path.join(runDir, 'close.json');
+    if (existsSync(cp)) {
+      const c = JSON.parse(readFileSync(cp, 'utf8')) as Record<string, unknown>;
+      c.seven_seats = {
+        ok: missing.length === 0, present, missing,
+        source: 'joint', degraded: missing.length > 0,
+        reason: '链后联审回填（backfill-after-joint·2026-11-26）',
+      };
+      const by: Record<string, number> = {};
+      for (const it of rfItems) { const k = String(it?.status ?? 'unknown'); by[k] = (by[k] ?? 0) + 1; }
+      const fixedN = by['fixed'] ?? 0;
+      c.refill_summary = {
+        total: rfItems.length, by_status: by, items_consumed: rfItems.length,
+        digest_rate: rfItems.length ? Number((fixedN / rfItems.length).toFixed(3)) : null,
+        items_ok: rf.ok ?? null, missing: rf.missing ?? [],
+      };
+      writeFileSync(cp, JSON.stringify(c, null, 2) + '\n', 'utf8');
+    }
+    // ② score-skill.json：ab_columns（各席 a/b 列均值）
+    const sp = path.join(runDir, 'score-skill.json');
+    if (existsSync(sp)) {
+      const ss = JSON.parse(readFileSync(sp, 'utf8')) as Record<string, unknown>;
+      const mean = (v: number[]): number | null =>
+        v.length ? Math.round((v.reduce((s, x) => s + x, 0) / v.length) * 100) / 100 : null;
+      const ab: Record<string, { a: number | null; b: number | null }> = {};
+      for (const [seat, f] of Object.entries(faces)) {
+        if (!f || (f as Record<string, unknown>).absent) continue;
+        const dims = Array.isArray((f as Record<string, unknown>).dimensions)
+          ? ((f as Record<string, unknown>).dimensions as Array<Record<string, unknown>>) : [];
+        const da = dims.filter((x) => String(x?.object).toLowerCase() === 'a' && typeof x?.score === 'number').map((x) => x.score as number);
+        const db = dims.filter((x) => String(x?.object).toLowerCase() === 'b' && typeof x?.score === 'number').map((x) => x.score as number);
+        ab[seat] = { a: mean(da), b: mean(db) };
+      }
+      ss.ab_columns = ab;
+      writeFileSync(sp, JSON.stringify(ss, null, 2) + '\n', 'utf8');
+    }
+    // ③ charter-*.json：只待办（fixed 排除·CEO 令）
+    const fixedIds = new Set(
+      rfItems.filter((x) => String(x?.status) === 'fixed').map((x) => String(x?.prev_opinion_id)),
+    );
+    if (fixedIds.size) {
+      for (const fn of readdirSync(runDir)) {
+        if (!/^charter-.*\.json$/.test(fn)) continue;
+        const chp = path.join(runDir, fn);
+        let ch: Record<string, unknown>;
+        try { ch = JSON.parse(readFileSync(chp, 'utf8')) as Record<string, unknown>; } catch { continue; }
+        const arr = ch.items;
+        if (!Array.isArray(arr)) continue;
+        const before = arr.length;
+        const kept = (arr as Array<Record<string, unknown>>).filter((it) => !fixedIds.has(String(it?.opinion_id)));
+        ch.items = kept;
+        ch.aggregation = {
+          ...(((ch.aggregation ?? {}) as Record<string, unknown>)),
+          pending_only_filter: { excluded_fixed: before - kept.length, note: 'CEO 令：charter 只待办（fixed 排除·backfill-after-joint 2026-11-26）' },
+        };
+        writeFileSync(chp, JSON.stringify(ch, null, 2) + '\n', 'utf8');
+      }
+    }
+  } catch (e) {
+    console.error('[fade001:backfill] joint backfill error (zero-break): ' + (e instanceof Error ? e.message : String(e)));
+  }
 }
 
 /** @internal P4 接线件（COO 派工 2026-11-21）：debug 联审毕→生成器调用钩子（COS 契约冻结面）。

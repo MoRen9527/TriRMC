@@ -387,7 +387,7 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     // §七⑤：人工改 state 无卷校验（runner-state.flag_state vs flag.json·violation 记 journal 零阻断）
     try {
       const _viol = stateIntegrity(st, flagVol);
-      if (_viol) appendStateJournal(String((p as Record<string, unknown>).runDir ?? ''), { event: 'state_violation', detail: _viol });
+      if (_viol) appendStateJournal(String(params.runDir ?? ''), { event: 'state_violation', detail: _viol });
     } catch { /* 零阻断 */ }
     if (flagVol.flag === 'test' && (st.test_consecutive_rounds ?? 0) >= FUSE_MAX_ROUNDS) {   // ①8 轮 FUSE（7→8 边界=F-2 钉）
       st.fuse_marker = true;

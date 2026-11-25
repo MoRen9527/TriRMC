@@ -175,6 +175,37 @@ export function generateCharter(
         cur.sum += sc; cur.n += 1; dimAgg.set(did, cur);
       }
     }
+    // S2-1（CEO §二）：暴露清单自动化——A/B 维度 <40 的席级项→强制进任务书（带 dimension_id+席+低分理由）
+    const exposureSeen = new Set<string>();
+    for (const [seat, f] of Object.entries(faces)) {
+      const face = (f ?? {}) as { absent?: boolean; dimensions?: Array<Record<string, unknown>> };
+      if (face.absent) continue;
+      for (const d of face.dimensions ?? []) {
+        const did = String(d?.dimension_id ?? d?.dimension ?? '');
+        const sc = d?.score;
+        if (!did || typeof sc !== 'number' || sc >= 40) continue;
+        const key = `${seat}:${did}`;
+        if (exposureSeen.has(key)) continue;
+        exposureSeen.add(key);
+        capabilityItems.push({
+          opinion_id: `exp-${seat}-${did}`,
+          title: `暴露改进：${did}（${seat} 席 ${sc}%<40）`,
+          target: `capability:${did}`,
+          change: '低分暴露项：下轮强制改进（非补产物）',
+          verify: `measurement: ${seat} 席 ${did} 维度分（0-100）`,
+          rollback: 'n/a（能力改进项）',
+          owner_seat: seat,
+          capability: true,
+          exposure: true,
+          seat,
+          dimension_id: did,
+          current_score: sc,
+          target_score: 60,
+          measurement: `${seat} 席 ${did} 维度分（0-100）`,
+          low_reason: `<40 暴露（${sc}%）`,
+        });
+      }
+    }
     for (const [did, agg] of dimAgg) {
       const mean = agg.sum / agg.n;
       if (mean >= 70) continue;                            // 低分维（<70）才出能力项

@@ -256,4 +256,20 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     assert.match(String(res.reason), /能力项占比/);
   });
 
+
+  it('S2-1：<40 暴露项自动入任务书（席级·dimension_id+low_reason·target 60）', () => {
+    const faces = { cos: { dimensions: [
+      { dimension_id: 'migrate_accuracy', object: 'a', score: 36 }] } };
+    const res = generateCharter(baseDoc([okOpinion('p1'), okOpinion('p2')]),
+      { date: '20261126', faces } as never);
+    assert.equal(res.ok, true);
+    const exps = (res.charter?.items ?? []).filter((i) => (i as Record<string, unknown>).exposure);
+    assert.equal(exps.length, 1);
+    const e = exps[0] as Record<string, unknown>;
+    assert.equal(e.seat, 'cos');
+    assert.equal(e.dimension_id, 'migrate_accuracy');
+    assert.equal(e.target_score, 60);
+    assert.ok(String(e.low_reason ?? '').includes('36'));
+  });
+
 });

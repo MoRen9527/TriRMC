@@ -943,3 +943,56 @@ test('DP-014 hook spawn env/cwd 自足：子进程 cwd=TC根·PYTHONPATH 含 TC�
     if (old.jr !== undefined) process.env.LOOP_JOINT_REVIEW = old.jr;
   }
 });
+
+test('§七 五案：迁移表四态 + 人工无卷违例', async () => {
+  const { nextStateTransition, stateIntegrity } = await import('../../src/fade001/round_runner.ts');
+  assert.deepEqual(nextStateTransition('debug', { a: 91, b: 91 }), {
+    from: 'debug', to: 'test', rule: 'S7-debug-to-test', basis: [91, 91] });
+  assert.equal(nextStateTransition('test', { a: 95, b: 95 }), null);
+  assert.equal(nextStateTransition('test', { a: 95.1, b: 95.1 })?.to, 'prod');
+  assert.equal(nextStateTransition('prod', { a: 95, b: 94 })?.rule, 'S7-prod-to-test');
+  assert.equal(nextStateTransition('prod', { a: 96, b: 96 }), null);
+  assert.equal(nextStateTransition('test', { a: null, b: null, failStreak: 3 })?.rule, 'S7-test-to-debug');
+  assert.equal(nextStateTransition('test', { a: null, b: null, failStreak: 2 }), null);
+  assert.match(String(stateIntegrity({ flag_state: 'test' }, { flag: 'prod' })), /无卷变更/);
+  assert.equal(stateIntegrity({ flag_state: 'test' }, { flag: 'test' }), null);
+});
+
+test('§七 集成：test 态联审 96/96 → flag 升 prod + journal state_transition', async () => {
+  const tcRoot = mkdtempSync(path.join(tmpdir(), 's7-tc-'));
+  const cogDir = path.join(tcRoot, 'runtime', 'cognition');
+  mkdirSync(cogDir, { recursive: true });
+  const rd = mkdtempSync(path.join(tmpdir(), 's7-rd-'));
+  const pyStub = [
+    'import json, sys',
+    `open(r"${path.join(rd, 'joint-review.json')}", "w").write(json.dumps({"seat_means": {"a": 96.0, "b": 96.0}}))`,
+    'sys.exit(0)',
+    '',
+  ].join(String.fromCharCode(10));
+  writeFileSync(path.join(cogDir, 'loop_joint_review_spawn.py'), pyStub, 'utf8');
+  const oldEnv = { cog: process.env.TRICO_COGNITION_DIR, py: process.env.FADE_PYTHON, jr: process.env.LOOP_JOINT_REVIEW };
+  process.env.TRICO_COGNITION_DIR = cogDir;
+  process.env.FADE_PYTHON = process.platform === 'win32' ? 'python' : 'python3';
+  delete process.env.LOOP_JOINT_REVIEW;
+  try {
+    seedFlag({ flag: 'test' });
+    const { runner } = makeRunner([{ verdict: 'continue' }]);
+    const st: RunnerState = { round_count: 3, resume_stage: null, flag_state: 'test' };
+    await runJointReviewHook(makeIo(root, runner), st, { runDir: rd, run_id: 's7' } as never);
+    const flagVol = JSON.parse(readFileSync(path.join(root, 'state', 'flag.json'), 'utf8'));
+    assert.equal(flagVol.flag, 'prod');
+    assert.equal(st.flag_state, 'prod');
+    const jp = path.join(rd, 'chain-journal.jsonl');
+    const events = readFileSync(jp, 'utf8').trim().split(String.fromCharCode(10)).map((x) => JSON.parse(x));
+    const tr = events.find((e) => e.event === 'state_transition');
+    assert.ok(tr);
+    assert.equal(tr.from, 'test');
+    assert.equal(tr.to, 'prod');
+    assert.deepEqual(tr.basis, [96, 96]);
+  } finally {
+    if (oldEnv.cog === undefined) delete process.env.TRICO_COGNITION_DIR; else process.env.TRICO_COGNITION_DIR = oldEnv.cog;
+    if (oldEnv.py === undefined) delete process.env.FADE_PYTHON; else process.env.FADE_PYTHON = oldEnv.py;
+    if (oldEnv.jr !== undefined) process.env.LOOP_JOINT_REVIEW = oldEnv.jr;
+  }
+});
+

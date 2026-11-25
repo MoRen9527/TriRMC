@@ -49,6 +49,62 @@ export interface FlagSignals {
   opinionsFused?: boolean;
 }
 
+/** §七 state 自动升降级（CTO 方案 af3575af5 2026-11-25·判据源=进化轴 A/B 联审分）。
+ *  迁移表：debug→test (A>90&&B>90) / test→prod (A>95&&B>95) /
+ *  prod→test (A<95||B<95·单侧跌破) / test→debug (连续 N 轮 fail·N 纪律册 default 3)。 */
+export interface StateSignals {
+  a?: number | null;
+  b?: number | null;
+  failStreak?: number;
+  failN?: number;
+}
+export interface StateTransition {
+  from: FlagState;
+  to: FlagState;
+  rule: 'S7-debug-to-test' | 'S7-test-to-prod' | 'S7-prod-to-test' | 'S7-test-to-debug';
+  basis: [number | null, number | null];
+}
+/** §七：state 变更 journal（chain-journal.jsonl 追加·与 chain_runner 同文件同形） */
+function appendStateJournal(runDir: string, entry: Record<string, unknown>): void {
+  try {
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + String.fromCharCode(10);
+    writeFileSync(path.join(runDir, 'chain-journal.jsonl'), line, { flag: 'a', encoding: 'utf8' });
+  } catch { /* 卷面零阻断 */ }
+}
+
+/** §五⑤：禁人工无卷改 state——runner-state.flag_state（卷侧写）与 flag.json（真源）不一致
+ *  = 无卷变更（violation 记 journal·零阻断）。 */
+export function stateIntegrity(
+  st: { flag_state?: FlagState | null },
+  flagVol: { flag: FlagState },
+): string | null {
+  const prev = st.flag_state ?? null;
+  if (prev && prev !== flagVol.flag) {
+    return `state 无卷变更：runner-state.flag_state=${prev} vs flag.json=${flagVol.flag}（需 flag 卷+journal）`;
+  }
+  return null;
+}
+
+export function nextStateTransition(current: FlagState, s: StateSignals): StateTransition | null {
+  const a = typeof s.a === 'number' ? s.a : null;
+  const b = typeof s.b === 'number' ? s.b : null;
+  const n = typeof s.failN === 'number' ? s.failN : 3;
+  const failStreak = s.failStreak ?? 0;
+  if (current === 'debug' && a !== null && b !== null && a > 90 && b > 90) {
+    return { from: 'debug', to: 'test', rule: 'S7-debug-to-test', basis: [a, b] };
+  }
+  if (current === 'test' && a !== null && b !== null && a > 95 && b > 95) {
+    return { from: 'test', to: 'prod', rule: 'S7-test-to-prod', basis: [a, b] };
+  }
+  if (current === 'prod' && a !== null && b !== null && (a < 95 || b < 95)) {
+    return { from: 'prod', to: 'test', rule: 'S7-prod-to-test', basis: [a, b] };
+  }
+  if (current === 'test' && failStreak >= n) {
+    return { from: 'test', to: 'debug', rule: 'S7-test-to-debug', basis: [a, b] };
+  }
+  return null;
+}
+
 export interface FlagEdge {
   from: FlagState;
   to: FlagState;
@@ -120,6 +176,7 @@ export interface RunnerState {
   // ── P4 状态机载体扩展（CTO 7c389cac3 §三·状态载体=runner-state 扩展）──
   flag_state?: FlagState | null;           // 现态快照（真源=flag.json·本字段=轮历史侧写）
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
+  fail_streak?: number;                    // §七（af3575af5）：连续失败轮数（test→debug 判据）
   // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
   // DP-014 守卫双修（CTO 规格 2026-11-23）：pending 所属 runId（跨 run 判重锚·旧 run 残留不挡新联审）
@@ -313,6 +370,8 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     roundsStarted += 1;   // DP-037/T5：每轮尝试即计
     const run = await io.chainRunner.run(params, resumeStage);   // 十段链+Skill 段程序化 spawn（节 4 接装）
     if (!run.ok) {                                               // 款三纪律：段报错停 fail-closed
+      st.fail_streak = (st.fail_streak ?? 0) + 1;
+      writeRunnerState(io, st);
       return { exit: { kind: 'failed', detail: `run failed: ${run.err ?? 'unknown'}` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
     }
     const verdict = run.aggregate.verdict;
@@ -321,9 +380,15 @@ export async function runLoop(io: RoundRunnerIo, ignite: { params: RoundParams; 
     if (verdict === 'loop_exit') {                               // 联审均分≥95（≥95 含边界）
       st.test_consecutive_rounds = 0;   // A 件 ③b：退出 test 清连续计数
       setFlag(io, 'prod', `run:${run.run_dir}`);                 // 唯一程序自动边（EXIT2·sanctioned）
+      if ((st.fail_streak ?? 0) !== 0) { st.fail_streak = 0; writeRunnerState(io, st); }
       return { exit: { kind: 'prod', detail: `EXIT>=${EXIT_GATE}→prod（ref=${run.run_dir}）` }, rounds_run: rounds, rounds_started: roundsStarted, final_state: st };
     }
     // DP-027 ⓑ（CTO 裁）：M9 FUSE 按态收窄——仅 test 态熔断；debug 不熔断（审批步 M4-v2 节流为界·如实注）；prod 不入 loop（起跑拦截既有）
+    // §七⑤：人工改 state 无卷校验（runner-state.flag_state vs flag.json·violation 记 journal 零阻断）
+    try {
+      const _viol = stateIntegrity(st, flagVol);
+      if (_viol) appendStateJournal(String((p as Record<string, unknown>).runDir ?? ''), { event: 'state_violation', detail: _viol });
+    } catch { /* 零阻断 */ }
     if (flagVol.flag === 'test' && (st.test_consecutive_rounds ?? 0) >= FUSE_MAX_ROUNDS) {   // ①8 轮 FUSE（7→8 边界=F-2 钉）
       st.fuse_marker = true;
       writeRunnerState(io, st);                                  // 熔断停候 CEO（fuse.marker+pending 冻结）
@@ -442,6 +507,28 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
   } catch (e) {
     console.error('[fade001:joint-review] joint-review.json unreadable（grade unknown·按未达标走 charter 链）: '
       + (e instanceof Error ? e.message : String(e)));
+  }
+  // ── §七 state 自动升降级（CTO 方案 af3575af5·判据源=进化轴 A/B）──
+  try {
+    const _cur = readFlag(io).flag;
+    const _tr = nextStateTransition(_cur, {
+      a: grade.a, b: grade.b, failStreak: st.fail_streak ?? 0,
+      failN: Number(process.env.FADE_STATE_FAIL_N ?? '3'),
+    });
+    if (_tr) {
+      setFlag(io, _tr.to, `auto:s7:${_tr.rule}`, st);
+      st.flag_state = _tr.to;
+      st.flag_since_round = st.round_count;
+      writeRunnerState(io, st);
+      appendStateJournal(runDir, { event: 'state_transition', from: _tr.from, to: _tr.to,
+        basis: _tr.basis, rule: _tr.rule });
+      console.error(`[fade001:state] transition ${_tr.from}->${_tr.to} (${_tr.rule}) basis=${JSON.stringify(_tr.basis)}`);
+    } else {
+      appendStateJournal(runDir, { event: 'state_check', current: _cur,
+        basis: [grade.a, grade.b], rule: null });
+    }
+  } catch (e) {
+    console.error('[fade001:state] transition hook error (zero-break): ' + (e instanceof Error ? e.message : String(e)));
   }
   // ── 阶段2：条件 charter（DP-021·CTO 裁）——达标轮 skip 留痕；未达标轮照现生成器链 ──
   const _patchConsumption = (): void => {

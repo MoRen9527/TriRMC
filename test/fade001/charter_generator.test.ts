@@ -166,4 +166,31 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
       else process.env.TRICO_COVERAGE_GATE = old;
     }
   });
+
+  it('两形兼容 B 形：per-seat 文件 face.improvements → 提取为 items（CTO 令 2026-11-25）', () => {
+    const faceDoc = {
+      schema_version: '1.0.0',
+      run_id: 'run-20261125-01',
+      seat: 'cto',
+      face: {
+        dimensions: [{ dimension: 'd1', score: 40 }],
+        improvements: [
+          { title: 'T-A', target: 'src/a.ts', change: 'c1', verify: 'v1', rollback: 'r1' },
+          { title: 'T-B', target: 'src/b.ts', change: 'c2', verify: 'v2', rollback: 'r2' },
+        ],
+        violations: [],
+      },
+    };
+    const res = generateCharter(faceDoc as unknown as OpinionsDoc, { date: '20261125' });
+    assert.equal(res.ok, true);
+    assert.equal(res.charter?.items.length, 2);          // 2 条提取
+    assert.equal(res.charter?.items[0].owner_seat, 'cto'); // seat 透传
+  });
+
+  it('两形兼容 A 形：doc.opinions 数组照旧（回归）', () => {
+    const res = generateCharter(baseDoc([okOpinion('R9-CTO-01')]), { date: '20261125' });
+    assert.equal(res.ok, true);
+    assert.equal(res.charter?.items.length, 1);
+  });
+
 });

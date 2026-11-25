@@ -98,25 +98,42 @@ export function generateCharter(
   const approver = opts.approver ?? 'CEO';
   const rejects: Array<{ opinion_id: string; missing: string[] }> = [];
 
-  if (!Array.isArray(doc.opinions) || doc.opinions.length === 0) {
-    return { ok: false, rejects, reason: 'opinions 空或非数组——无可映射意见' };
+  // 两形兼容（CTO 令 2026-11-25·COS 核 R-HY）：A 形=doc.opinions 数组（照旧）；
+  // B 形=per-seat 文件 {schema_version,seat,face{dimensions,improvements,violations}} →
+  // 顶层 doc.face.improvements 当意见数组（五字段已在 improvement 内·owner_seat 取 seat）。
+  const _anyDoc = doc as unknown as Record<string, unknown>;
+  let _opsIn: unknown[] = Array.isArray(_anyDoc.opinions) ? (_anyDoc.opinions as unknown[]) : [];
+  if (_opsIn.length === 0) {
+    const face = _anyDoc.face as Record<string, unknown> | undefined;
+    const imps = face && Array.isArray(face.improvements) ? (face.improvements as unknown[]) : [];
+    if (imps.length > 0) {
+      const seat = String(_anyDoc.seat ?? 'seat');
+      const ownerSeat = String(_anyDoc.owner_seat ?? seat);
+      _opsIn = imps.map((it, i) => {
+        const rec = (it ?? {}) as Record<string, unknown>;
+        return { ...rec, opinion_id: nonEmpty(rec.title) ? String(rec.title) : `${seat}-${i}`, owner_seat: ownerSeat };
+      });
+    }
+  }
+  if (_opsIn.length === 0) {
+    return { ok: false, rejects, reason: 'opinions 空或非数组——无可映射意见（A/B 两形皆空）' };
   }
 
   const items: CharterItem[] = [];
-  for (const o of doc.opinions) {
+  for (const o of _opsIn as Array<Record<string, unknown>>) {
     const missing: string[] = [];
-    if (!nonEmpty(o.opinion_id)) missing.push('opinion_id');
-    if (!nonEmpty(o.title)) missing.push('title');
+    if (!nonEmpty(o.opinion_id as string)) missing.push('opinion_id');
+    if (!nonEmpty(o.title as string)) missing.push('title');
     for (const f of REQUIRED_FIELDS) {
       if (!nonEmpty((o as Record<string, unknown>)[f])) missing.push(f);
     }
     if (missing.length > 0) {
-      rejects.push({ opinion_id: nonEmpty(o.opinion_id) ? o.opinion_id : '<missing>', missing });
+      rejects.push({ opinion_id: nonEmpty(o.opinion_id as string) ? String(o.opinion_id) : '<missing>', missing });
       continue;
     }
     items.push({
-      opinion_id: o.opinion_id,
-      title: o.title,
+      opinion_id: String(o.opinion_id),
+      title: String(o.title),
       target: o.target as string,
       change: o.change as string,
       verify: o.verify as string,
@@ -143,8 +160,8 @@ export function generateCharter(
   const dropped = mergedReport;    // 语义改=仅「去重合并报告」（{opinion_id,title}·非截断清单）
   // 低分维覆盖：opinions[].scores 中 <60 的维，须被任一件 target/covered_dims 覆盖
   const lowDims: string[] = [];
-  for (const o of doc.opinions) {
-    const scores = (o as Record<string, unknown>).scores;
+  for (const o of _opsIn as Array<Record<string, unknown>>) {
+    const scores = o.scores;
     if (scores && typeof scores === 'object') {
       for (const [dim, sc] of Object.entries(scores as Record<string, unknown>)) {
         if (typeof sc === 'number' && sc < 60) lowDims.push(dim);

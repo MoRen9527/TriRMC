@@ -560,6 +560,18 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
     return { grade, charter: 'skipped' as const };
   }
   await tryCharterHook(io, st, params);   // opinions.json → 生成器 → pending 写（P4 tie 位移后同链复用）
+  // ②（CEO 三层合流 2026-11-26）：链后联审（轮末钩）之后——COS final-summary 判断式收口→close.json#/final
+  if (process.env.FADE_COS_FINAL !== '0') {
+    try {
+      const _fs = path.join(cogDir, 'cos_final_summary_spawn.py');
+      if (existsSync(_fs)) {
+        spawnSync(py, [_fs, '--run-dir', runDir, '--run-id', String(params.run_id ?? '')], {
+          encoding: 'utf8', timeout: SPAWN_STAGE_TIMEOUT_MS, cwd: _tcRoot,
+          env: { ...process.env, PYTHONPATH: appendPyPath(process.env.PYTHONPATH, _tcRoot) },
+        });
+      }
+    } catch { /* 零阻断 */ }
+  }
   _patchConsumption();
   return { grade, charter: 'attempted' as const };
 }

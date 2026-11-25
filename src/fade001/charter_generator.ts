@@ -64,7 +64,7 @@ export interface CharterDraft {
   status: 'pending_approval';
   items: CharterItem[];
   auto_dispatch?: true;
-  aggregation?: { items_before?: number; items_included?: number; dropped?: unknown[] };
+  aggregation?: { items_before?: number; items_included?: number; dropped?: unknown[]; excluded_status?: Array<{ opinion_id: string; status: string; reason: string }> };
 }
 
 export interface GenerateResult {

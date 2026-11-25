@@ -410,6 +410,20 @@ test('T2b：close partial 止链 → journal chain_end ok=false（failed_stage=c
   assert.equal(end.failed_stage, 'close_skill');
 });
 
+
+test('S4a：close_skill rc=2（红面即停）→ 链止于 close_skill', async () => {
+  const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-s4a-'));
+  const b = greenBehavior(runDir);
+  b.close_skill = { write: path.join(runDir, 'close.json'), body: '{}', rc: 2 };
+  const tc = stubAll(b);
+  const runner = makeChainRunner({ triCompanyRoot: tc, pythonBin: PY });
+  const r = await runner.run({ runDir, runId: 's4a', fromWeek: 'W1', toWeek: 'W2', startDate: '2026-01-05', tmvRoot: 'T' } as never, null);
+  assert.equal(r.ok, false);
+  const err = String(r.err);
+  assert.match(err, /close_skill/);
+  assert.ok(!existsSync(path.join(runDir, 'notify_done.json')));
+});
+
 test('charter 1/2/5 段门：dce 非 pass（rc0·dry_run_not_executed）→止链·failed_stage=dce·不 notify', async () => {
   const runDir = mkdtempSync(path.join(os.tmpdir(), 'd7-gate-'));
   const b = greenBehavior(runDir);

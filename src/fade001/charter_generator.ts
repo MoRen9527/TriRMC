@@ -93,7 +93,11 @@ function nonEmpty(v: unknown): v is string {
  */
 export function generateCharter(
   doc: OpinionsDoc,
-  opts: { approver?: 'CEO' | 'COS'; date?: string; now?: Date; autoDispatch?: boolean } = {},
+  opts: {
+    approver?: 'CEO' | 'COS'; date?: string; now?: Date; autoDispatch?: boolean;
+    /** S3-1（CEO 第一问·2026-11-26）：A/B 联审 faces（能力项通道输入·低分维度→能力改进目标） */
+    faces?: Record<string, unknown>;
+  } = {},
 ): GenerateResult {
   const approver = opts.approver ?? 'CEO';
   const rejects: Array<{ opinion_id: string; missing: string[] }> = [];
@@ -155,6 +159,46 @@ export function generateCharter(
     });
   }
 
+  // ── S3-1（CEO 第一问方案 §三）：能力项通道——A/B 低分维度（<70）→能力改进目标（量化+measurement）──
+  const capabilityItems: CharterItem[] = [];
+  try {
+    const faces = (opts.faces ?? {}) as Record<string, unknown>;
+    const dimAgg = new Map<string, { sum: number; n: number; obj: string }>();
+    for (const f of Object.values(faces)) {
+      const face = (f ?? {}) as { absent?: boolean; dimensions?: Array<Record<string, unknown>> };
+      if (face.absent) continue;
+      for (const d of face.dimensions ?? []) {
+        const did = String(d?.dimension_id ?? d?.dimension ?? '');
+        const sc = d?.score;
+        if (!did || typeof sc !== 'number') continue;
+        const cur = dimAgg.get(did) ?? { sum: 0, n: 0, obj: String(d?.object ?? '') };
+        cur.sum += sc; cur.n += 1; dimAgg.set(did, cur);
+      }
+    }
+    for (const [did, agg] of dimAgg) {
+      const mean = agg.sum / agg.n;
+      if (mean >= 70) continue;                            // 低分维（<70）才出能力项
+      const current = Math.round(mean * 10) / 10;
+      const target = mean < 60 ? 70 : 80;                  // 阶梯目标（<60→70·60-69→80）
+      capabilityItems.push({
+        opinion_id: `cap-${did}`,
+        title: `能力改进：${did} ${current}%→${target}%`,
+        target: `capability:${did}`,
+        change: '能力改进路线（非补产物）：针对该维度要件逐项补强',
+        verify: `measurement: joint-review 维度均分（${did}·0-100 口径·object=${agg.obj || 'both'}）`,
+        rollback: 'n/a（能力改进项·非施工令）',
+        owner_seat: 'CTO',
+        capability: true,
+        dimension_id: did,
+        current_score: current,
+        target_score: target,
+        measurement: `joint-review 维度均分（${did}·0-100）`,
+      });
+    }
+  } catch { /* 能力项通道零阻断 */ }
+  const _taskItems = items.slice();
+  items.push(...capabilityItems);                          // 能力项=items 的一类待办（与 CEO 只含待办令衔接）
+
   // ── T1②（任务书 v2·R5/R16/R18）：族归并 ≤5 条/轮 + 低分维覆盖校验（两级形·D3）──
   const itemsBefore = items.length;
   const excludedStatus = _excluded;   // ④：状态排除留痕（fixed/carried）
@@ -171,6 +215,13 @@ export function generateCharter(
     return true;
   });
   const capped = deduped;          // v8 item12（CEO 批）：每席直提条数不限——全纳
+  // S3-1 配比门：能力项 ≥30%（低分维存在时判——否则视为「合规清单」不合格）
+  const _capIncluded = capped.filter((i) => Boolean(i.capability)).length;
+  const _capRatio = capped.length > 0 ? _capIncluded / capped.length : 0;
+  if (capabilityItems.length > 0 && _capRatio < 0.3) {
+    return { ok: false, rejects,
+      reason: `能力项占比 ${Math.round(_capRatio * 100)}% < 30%（CEO §三.2 配比）——合规清单不合格` };
+  }
   const dropped = mergedReport;    // 语义改=仅「去重合并报告」（{opinion_id,title}·非截断清单）
   // 低分维覆盖：opinions[].scores 中 <60 的维，须被任一件 target/covered_dims 覆盖
   const lowDims: string[] = [];
@@ -218,7 +269,7 @@ export function generateCharter(
     status: 'pending_approval',
     items,
     // T1②：聚合计（族归并/截断留痕·供审计）
-    aggregation: { items_before: itemsBefore, items_included: capped.length, dropped, excluded_status: excludedStatus },
+    aggregation: { items_before: itemsBefore, items_included: capped.length, dropped, excluded_status: excludedStatus, capability_items: _capIncluded, capability_ratio: Math.round(_capRatio * 100) / 100 },
   };
   // 红线二：auto_dispatch 仅显式授予才写·默认不置（脚本层兜死·防误扩大自动面）
   if (opts.autoDispatch === true) charter.auto_dispatch = true;

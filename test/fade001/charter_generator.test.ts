@@ -206,4 +206,21 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     assert.deepEqual([...new Set(res.charter?.items.map((i) => i.owner_seat))].sort(), seats.sort());
   });
 
+
+  it('④CEO 新令：只含待办——fixed 不收·carried 禁入·excluded_status 留痕', () => {
+    const ops = [
+      { ...okOpinion('p-fixed'), status: 'fixed' },
+      { ...okOpinion('p-carried'), status: 'carried' },
+      { ...okOpinion('p-defer'), status: 'deferred' },
+      { ...okOpinion('p-new') },
+    ];
+    const res = generateCharter(baseDoc(ops), { date: '20261126' });
+    assert.equal(res.ok, true);
+    assert.equal(res.charter?.items.length, 2);                       // deferred + new
+    const agg = (res.charter as unknown as Record<string, unknown>).aggregation as
+      { excluded_status?: Array<{ status: string }> } | undefined;
+    assert.equal(agg?.excluded_status?.length, 2);
+    assert.deepEqual((agg?.excluded_status ?? []).map((x) => x.status).sort(), ['carried', 'fixed']);
+  });
+
 });

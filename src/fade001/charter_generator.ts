@@ -120,7 +120,20 @@ export function generateCharter(
   }
 
   const items: CharterItem[] = [];
+  // ④（CEO 新令 2026-11-26）：新任务书只含待办——已修(fixed)不收·上轮未结账(carried)禁入下一轮
+  const _excluded: Array<{ opinion_id: string; status: string; reason: string }> = [];
   for (const o of _opsIn as Array<Record<string, unknown>>) {
+    const _st = String((o as Record<string, unknown>).status ?? '').toLowerCase();
+    if (_st === 'fixed') {
+      _excluded.push({ opinion_id: String(o.opinion_id ?? ''), status: _st,
+        reason: '已修（fixed）不入新任务书' });
+      continue;
+    }
+    if (_st === 'carried') {
+      _excluded.push({ opinion_id: String(o.opinion_id ?? ''), status: _st,
+        reason: '上轮未结账（carried）禁入下一轮·先结账' });
+      continue;
+    }
     const missing: string[] = [];
     if (!nonEmpty(o.opinion_id as string)) missing.push('opinion_id');
     if (!nonEmpty(o.title as string)) missing.push('title');
@@ -144,6 +157,7 @@ export function generateCharter(
 
   // ── T1②（任务书 v2·R5/R16/R18）：族归并 ≤5 条/轮 + 低分维覆盖校验（两级形·D3）──
   const itemsBefore = items.length;
+  const excludedStatus = _excluded;   // ④：状态排除留痕（fixed/carried）
   // 去重：同 (title,target) 视为同族重复意见 → 合一件（v8 item12：全纳重写——条数不限）
   const seen = new Set<string>();
   const mergedReport: Array<{ opinion_id: string; title: string; target: string }> = [];
@@ -204,7 +218,7 @@ export function generateCharter(
     status: 'pending_approval',
     items,
     // T1②：聚合计（族归并/截断留痕·供审计）
-    aggregation: { items_before: itemsBefore, items_included: capped.length, dropped },
+    aggregation: { items_before: itemsBefore, items_included: capped.length, dropped, excluded_status: excludedStatus },
   };
   // 红线二：auto_dispatch 仅显式授予才写·默认不置（脚本层兜死·防误扩大自动面）
   if (opts.autoDispatch === true) charter.auto_dispatch = true;

@@ -193,4 +193,17 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     assert.equal(res.charter?.items.length, 1);
   });
 
+
+  it('T1a：七席溯源保留——14 条逐改善条目化输入 → items 各带 owner_seat（非合订）', () => {
+    const seats = ['cos', 'coo', 'cao', 'cpo', 'cto', 'cho', 'cfo'];
+    const ops = seats.flatMap((s) => [
+      { ...okOpinion(`${s}-0`), owner_seat: s },
+      { ...okOpinion(`${s}-1`), title: `${s} 第二项`, owner_seat: s },
+    ]);
+    const res = generateCharter(baseDoc(ops), { date: '20261125' });
+    assert.equal(res.ok, true);
+    assert.equal(res.charter?.items.length, 14);
+    assert.deepEqual([...new Set(res.charter?.items.map((i) => i.owner_seat))].sort(), seats.sort());
+  });
+
 });

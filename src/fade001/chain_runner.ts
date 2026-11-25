@@ -349,7 +349,19 @@ export function makeChainRunner(paths: ChainRunnerPaths): ChainRunner & { stages
     }
 
     const proj = projectVerdict(runDir);
-    appendChainJournal(runDir, { event: 'chain_end', ok: proj.ok, failed_stage: null });
+    // CPO12（B2）：收口写 D-91 marker 态与裁决回执（chain_end 携带）
+    let _endD91: Record<string, unknown> = { state: 'unknown' };
+    try {
+      const _bare2 = process.env.TRICO_BARE_REPO ?? process.env.FADE_BARE_REPO;
+      if (_bare2) _endD91 = { state: chainRefInfo(_bare2).state };
+    } catch { _endD91 = { state: 'check-failed' }; }
+    let _rulingReceipt: Record<string, unknown> = { consumed: existsSync(path.join(runDir, '.ceo-ruling-consumed.json')) };
+    try {
+      const _rm = JSON.parse(readFileSync(path.join(runDir, '.ceo-ruling-consumed.json'), 'utf8')) as Record<string, unknown>;
+      _rulingReceipt.run_id = _rm.run_id ?? null;
+    } catch { /* 无戳零阻断 */ }
+    appendChainJournal(runDir, { event: 'chain_end', ok: proj.ok, failed_stage: null,
+      d91_marker: _endD91, ruling_receipt: _rulingReceipt });
     return {
       ok: proj.ok,
       run_dir: runDir,

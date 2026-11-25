@@ -150,7 +150,7 @@ export function generateCharter(
   const deduped = items.filter((it) => {
     const k = `${it.title}|${it.target}`;
     if (seen.has(k)) {
-      mergedReport.push({ opinion_id: it.opinion_id, title: it.title });   // 去重合并可溯源（原 opinion_id/title）
+      mergedReport.push({ opinion_id: it.opinion_id, title: it.title, target: it.target });   // 去重合并可溯源（原 opinion_id/title/target·r34 落痕）
       return false;
     }
     seen.add(k);

@@ -146,7 +146,7 @@ export function generateCharter(
   const itemsBefore = items.length;
   // 去重：同 (title,target) 视为同族重复意见 → 合一件（v8 item12：全纳重写——条数不限）
   const seen = new Set<string>();
-  const mergedReport: Array<{ opinion_id: string; title: string }> = [];
+  const mergedReport: Array<{ opinion_id: string; title: string; target: string }> = [];
   const deduped = items.filter((it) => {
     const k = `${it.title}|${it.target}`;
     if (seen.has(k)) {

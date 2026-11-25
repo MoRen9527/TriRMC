@@ -558,6 +558,7 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
     } catch { /* 留痕面零阻断 */ }
     console.error(`[fade001:charter-hook] skipped: A/B passed (a=${String(grade.a)}, b=${String(grade.b)})`);
     backfillFromJoint(runDir);
+    recomputeScoreFromJoint(runDir, params, py, cogDir, process.env);
     return { grade, charter: 'skipped' as const };
   }
   await tryCharterHook(io, st, params);   // opinions.json → 生成器 → pending 写（P4 tie 位移后同链复用）
@@ -575,7 +576,39 @@ export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, par
   }
   _patchConsumption();
   backfillFromJoint(runDir);
+  recomputeScoreFromJoint(runDir, params, py, cogDir, process.env);
   return { grade, charter: 'attempted' as const };
+}
+
+/** 链后联审后重算 score（CTO 裁 2026-11-26·段序族第 5 面修 a·SDE 施工）：
+ *  score 段（段 6）早于链后联审 → improvement_block 的 cur joint-review 缺席致 checked 永 false
+ *  （score_engine.py L744 early-return 铁证）。联审落卷后本函数 spawn score_cli 重算 score.json——
+ *  improvement_block 即有 cur jr（params min_rate/k 由 CEO 给值后即活·零改码）。幂等/零炸。 */
+export function recomputeScoreFromJoint(
+  runDir: string,
+  params: Record<string, unknown>,
+  py: string,
+  cogDir: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  try {
+    const script = path.join(cogDir, 'score_cli.py');
+    if (!existsSync(script)) return;
+    const _tcRoot = path.dirname(path.dirname(cogDir));
+    const r = spawnSync(py, [script, '--run-dir', runDir,
+      '--run-id', String(params.run_id ?? ''),
+      '--from-week', String(params.fromWeek ?? ''),
+      '--to-week', String(params.toWeek ?? '')], {
+      encoding: 'utf8', timeout: SPAWN_STAGE_TIMEOUT_MS, cwd: _tcRoot,
+      env: { ...env, PYTHONPATH: appendPyPath(env.PYTHONPATH, _tcRoot) },
+    });
+    if (r.status !== 0) {
+      console.error('[fade001:score-backfill] score_cli rc=' + String(r.status) + ' (zero-break): '
+        + String((r.stderr ?? '').slice(-200)));
+    }
+  } catch (e) {
+    console.error('[fade001:score-backfill] error (zero-break): ' + (e instanceof Error ? e.message : String(e)));
+  }
 }
 
 /** 链后联审回填（CEO 批三层①技术面·2026-11-26·SDE 施工；形照 score backfill 族）：

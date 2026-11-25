@@ -672,7 +672,13 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
   if (!_ap && st.pending_charter_ref && st.charter_run_id === params.run_id) return;   // 幂等：本 run 已挂待批不重复
   try {
     const mod = await import('./charter_generator.js');
-    const res = mod.generateCharterFromFile(opinionsPath, { approver: 'CEO' });  // debug 链=CEO 批（CEO④ 形）
+    // S3-1（CEO 第一问）：能力项通道输入——joint-review faces 随 opts 传入（A/B 低分维度→能力项）
+    let _faces: Record<string, unknown> | undefined;
+    try {
+      const _jp = path.join(runDir, 'joint-review.json');
+      if (existsSync(_jp)) _faces = (JSON.parse(readFileSync(_jp, 'utf8')) as Record<string, unknown>).faces as Record<string, unknown> | undefined;
+    } catch { _faces = undefined; }
+    const res = mod.generateCharterFromFile(opinionsPath, { approver: 'CEO', faces: _faces });  // debug 链=CEO 批（CEO④ 形）
     if (!res.ok || !res.charter) {
       console.error(`[fade001:charter-hook] generator rejected（fail-closed 不写 pending）: ${res.reason ?? 'unknown'}`);
       return;

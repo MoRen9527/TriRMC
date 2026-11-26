@@ -308,6 +308,22 @@ export function generateCharter(
 }
 
 /** 从磁盘读 opinions.json 并生成（CLI/集成共用） */
+/** E3 断言形（进化架构 2026-11-26）：fade-001 的 charter **只含迁移任务项**——
+     capability:true 的能力/进化项=违规（应迁「进化任务书」卷·COS 树协议）。
+     返回违规清单（空=合规；E3 主体移出前预期非空=红形）。 */
+export function charterTaskOnlyViolations(charter: { items?: Array<Record<string, unknown>> }):
+  Array<{ opinion_id: string; violation: string }> {
+  const out: Array<{ opinion_id: string; violation: string }> = [];
+  for (const it of charter?.items ?? []) {
+    if (!it || typeof it !== 'object') continue;
+    if ((it as Record<string, unknown>).capability === true) {
+      out.push({ opinion_id: String((it as Record<string, unknown>).opinion_id ?? '?'),
+        violation: '能力/进化项（capability:true）不得入迁移 charter——应入进化任务书（E3）' });
+    }
+  }
+  return out;
+}
+
 export function generateCharterFromFile(
   opinionsPath: string,
   opts: { approver?: 'CEO' | 'COS'; date?: string; autoDispatch?: boolean; faces?: Record<string, unknown> } = {},

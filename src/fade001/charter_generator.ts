@@ -67,9 +67,19 @@ export interface CharterDraft {
   aggregation?: { items_before?: number; items_included?: number; dropped?: unknown[]; excluded_status?: Array<{ opinion_id: string; status: string; reason: string }>; capability_items?: number; capability_ratio?: number };
 }
 
+export interface EvolutionDraft {
+  schema_version: string;
+  charter_id: string;
+  approver_pending: 'COS';
+  status: 'pending_approval';
+  items: CharterItem[];
+  aggregation: Record<string, unknown>;
+}
+
 export interface GenerateResult {
   ok: boolean;
   charter?: CharterDraft;
+  evolution?: EvolutionDraft;
   /** 退回人工的意见（缺字段族） */
   rejects: Array<{ opinion_id: string; missing: string[] }>;
   reason?: string;
@@ -227,8 +237,7 @@ export function generateCharter(
       });
     }
   } catch { /* 能力项通道零阻断 */ }
-  const _taskItems = items.slice();
-  items.push(...capabilityItems);                          // 能力项=items 的一类待办（与 CEO 只含待办令衔接）
+  // E3（CEO 进化架构 2026-11-26）：capability 项移出 charter.items→独立进化任务书
 
   // ── T1②（任务书 v2·R5/R16/R18）：族归并 ≤5 条/轮 + 低分维覆盖校验（两级形·D3）──
   const itemsBefore = items.length;
@@ -247,12 +256,9 @@ export function generateCharter(
   });
   const capped = deduped;          // v8 item12（CEO 批）：每席直提条数不限——全纳
   // S3-1 配比门：能力项 ≥30%（低分维存在时判——否则视为「合规清单」不合格）
+  // E3 后：charter.items 恒不含 capability——配比 30% 移至进化任务书卷记录（不拦 charter）
   const _capIncluded = capped.filter((i) => Boolean(i.capability)).length;
   const _capRatio = capped.length > 0 ? _capIncluded / capped.length : 0;
-  if (capabilityItems.length > 0 && _capRatio < 0.3) {
-    return { ok: false, rejects,
-      reason: `能力项占比 ${Math.round(_capRatio * 100)}% < 30%（CEO §三.2 配比）——合规清单不合格` };
-  }
   const dropped = mergedReport;    // 语义改=仅「去重合并报告」（{opinion_id,title}·非截断清单）
   // 低分维覆盖：opinions[].scores 中 <60 的维，须被任一件 target/covered_dims 覆盖
   const lowDims: string[] = [];
@@ -304,7 +310,17 @@ export function generateCharter(
   };
   // 红线二：auto_dispatch 仅显式授予才写·默认不置（脚本层兜死·防误扩大自动面）
   if (opts.autoDispatch === true) charter.auto_dispatch = true;
-  return { ok: true, charter, rejects };
+  // E3：独立进化任务书（capability 项·COS 树协议消费·产出侧）
+  const evolution = capabilityItems.length > 0 ? {
+    schema_version: CHARTER_SCHEMA_VERSION,
+    charter_id: `eco-${date}`,
+    approver_pending: 'COS' as const,
+    status: 'pending_approval' as const,
+    items: capabilityItems,
+    aggregation: { capability_items: capabilityItems.length, capability_ratio: 1.0,
+                   note: '能力/进化项卷（COS 树协议消费·E3）' },
+  } : undefined;
+  return { ok: true, charter, rejects, evolution };
 }
 
 /** 从磁盘读 opinions.json 并生成（CLI/集成共用） */

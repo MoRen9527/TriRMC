@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   CHARTER_SCHEMA_VERSION,
+  charterTaskOnlyViolations,
   generateCharter,
   generateCharterFromFile,
   type OpinionsDoc,
@@ -235,25 +236,26 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     const res = generateCharter(baseDoc([okOpinion('p1'), okOpinion('p2')]),
       { date: '20261126', faces } as never);
     assert.equal(res.ok, true);
-    const caps = (res.charter?.items ?? []).filter((i) => (i as Record<string, unknown>).capability);
-    assert.equal(caps.length, 1);                                  // 只低分维出项（<70）
+    const caps = (res.evolution?.items ?? []).filter((i) => (i as Record<string, unknown>).capability);
+    assert.equal(caps.length, 1);                                  // 只低分维出项（<70）·E3 迁进化卷
     const cap = caps[0] as Record<string, unknown>;
     assert.equal(cap.dimension_id, 'migrate_accuracy');
     assert.equal(cap.current_score, 42);                           // (40+44)/2
     assert.equal(cap.target_score, 70);                            // <60 阶梯→70
     assert.ok(String(cap.measurement ?? '').includes('均分'));      // measurement 必填
-    const agg = (res.charter as unknown as Record<string, unknown>).aggregation as
-      Record<string, unknown>;
-    assert.ok(Number(agg.capability_ratio) >= 0.3);                // 1 cap / 4 items?=0.25→见下
+    // E3：charter 面 capability 恒零（断言转绿）；进化卷记录 ratio
+    assert.equal((res.charter?.items ?? []).filter((i) => (i as Record<string, unknown>).capability).length, 0);
+    assert.equal(res.evolution?.aggregation?.capability_items, 1);
   });
 
-  it('S3-1：能力项占比 <30% → ok=false（合规清单不合格）', () => {
+  it('E3：capability 移出后 charter ok 恒真·进化卷承载（原 30% 拦截退役）', () => {
     const many = Array.from({ length: 10 }, (_, i) => okOpinion(`t-${i}`));
     const faces = { cos: { dimensions: [
       { dimension_id: 'low1', object: 'a', score: 30 }] } };
     const res = generateCharter(baseDoc(many), { date: '20261126', faces } as never);
-    assert.equal(res.ok, false);
-    assert.match(String(res.reason), /能力项占比/);
+    assert.equal(res.ok, true);
+    assert.equal((res.evolution?.items ?? []).length >= 1, true);
+    assert.equal((res.charter?.items ?? []).filter((i) => (i as Record<string, unknown>).capability).length, 0);
   });
 
 
@@ -263,13 +265,32 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     const res = generateCharter(baseDoc([okOpinion('p1'), okOpinion('p2')]),
       { date: '20261126', faces } as never);
     assert.equal(res.ok, true);
-    const exps = (res.charter?.items ?? []).filter((i) => (i as Record<string, unknown>).exposure);
+    const exps = (res.evolution?.items ?? []).filter((i) => (i as Record<string, unknown>).exposure);
     assert.equal(exps.length, 1);
     const e = exps[0] as Record<string, unknown>;
     assert.equal(e.seat, 'cos');
     assert.equal(e.dimension_id, 'migrate_accuracy');
     assert.equal(e.target_score, 60);
     assert.ok(String(e.low_reason ?? '').includes('36'));
+  });
+
+
+  it('E3：charter items 无 capability（断言绿）·evolution-charter 件形齐', () => {
+    const faces = { cos: { dimensions: [
+      { dimension_id: 'migrate_accuracy', object: 'a', score: 36 }] } };
+    const res = generateCharter(baseDoc([okOpinion('p1'), okOpinion('p2')]),
+      { date: '20261126', faces } as never);
+    // ①E3 断言：charter 只含迁移任务项
+    const viol = charterTaskOnlyViolations(res.charter as never);
+    assert.equal(viol.length, 0);
+    // ②进化卷形齐
+    const evo = res.evolution;
+    assert.ok(evo);
+    assert.equal(evo?.approver_pending, 'COS');
+    assert.ok((evo?.items ?? []).length >= 1);
+    const e0 = (evo?.items ?? [])[0] as Record<string, unknown>;
+    assert.equal(e0.capability, true);
+    assert.ok(String(e0.measurement ?? '').length > 0);
   });
 
 });

@@ -718,6 +718,15 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
     }
     const stamp = io.nowIso().replace(/[-:.]/g, '');
     const charterPath = path.join(runDir, `charter-${stamp}.json`);
+    writeFileSync(charterPath, JSON.stringify(res.charter, null, 2) + String.fromCharCode(10), 'utf8');
+    // E3（CEO 进化架构 2026-11-26）：独立进化任务书（capability 项·COS 树协议消费）
+    try {
+      const evo = (res as { evolution?: unknown }).evolution;
+      if (evo) {
+        writeFileSync(path.join(runDir, `evolution-charter-${stamp}.json`),
+          JSON.stringify(evo, null, 2) + String.fromCharCode(10), 'utf8');
+      }
+    } catch { /* 产出侧零阻断 */ }
     writeFileSync(charterPath, JSON.stringify(res.charter, null, 2) + '\n', 'utf8');
     st.pending_charter_ref = charterPath;
     st.charter_approval = 'CEO';

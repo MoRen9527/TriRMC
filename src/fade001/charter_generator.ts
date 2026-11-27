@@ -56,6 +56,45 @@ export interface CharterItem {
 }
 
 /** 任务书草稿（pending_approval·不含 auto_dispatch 除显式授予） */
+/** CAO 批标志位（BOD 模板 v1.0.1·CEO 令 22:57·fail-closed 机器门）：
+ *  **唯一挂载判据=approved===true**（CAO 定稿 v1.0.1：其余字段供核不供判）；approved_at/checks/approver/commit 记而不卡。 */
+export interface CaoApproval {
+  approved?: boolean;
+  approver?: string;
+  approved_at?: string;
+  commit?: string;
+  checks?: string[];
+}
+
+export interface CaoGateResult {
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  detail?: string;
+  expected?: string;
+  fix?: string;
+  missing?: string[];
+}
+
+// CAO 三处一致性清单 #4：#5 拒因三要素（code+detail/expected/fix）——C1-C5 检查面属 CAO，
+// 本门只判 approved；C1-C5 引用只给路径不复写：standard-templates/taskcharter-check-spec-v1.0.md
+export function validateCaoApproval(a: unknown): CaoGateResult {
+  const obj = (a ?? {}) as Record<string, unknown>;
+  if (obj.approved === true) return { ok: true };
+  const missing = ['approved!=true'];   // 唯一判据（CAO v1.0.1）
+  const detail = (a == null) ? 'cao_approval 块缺失'
+    : `approved=${String(obj.approved)}（需 true）`;
+  return {
+    ok: false,
+    code: 'CAO_NOT_APPROVED',
+    reason: 'CAO 批缺失/未批·拒挂任务书',
+    detail,
+    expected: 'approved: true',
+    fix: '请 CAO 批后写 cao_approval 块（approved: true·余字段供核不供判）',
+    missing,
+  };
+}
+
 export interface CharterDraft {
   schema_version: string;
   charter_id: string;
@@ -65,6 +104,10 @@ export interface CharterDraft {
   items: CharterItem[];
   auto_dispatch?: true;
   aggregation?: { items_before?: number; items_included?: number; dropped?: unknown[]; excluded_status?: Array<{ opinion_id: string; status: string; reason: string }>; capability_items?: number; capability_ratio?: number };
+  cao_approval?: CaoApproval;
+  gated?: boolean;
+  gate_reason?: string;
+  cao_gate_missing?: string[];
 }
 
 export interface EvolutionDraft {
@@ -107,6 +150,7 @@ export function generateCharter(
     approver?: 'CEO' | 'COS'; date?: string; now?: Date; autoDispatch?: boolean;
     /** S3-1（CEO 第一问·2026-11-26）：A/B 联审 faces（能力项通道输入·低分维度→能力改进目标） */
     faces?: Record<string, unknown>;
+    caoApproval?: CaoApproval;
   } = {},
 ): GenerateResult {
   const approver = opts.approver ?? 'CEO';
@@ -310,6 +354,20 @@ export function generateCharter(
   };
   // 红线二：auto_dispatch 仅显式授予才写·默认不置（脚本层兜死·防误扩大自动面）
   if (opts.autoDispatch === true) charter.auto_dispatch = true;
+  // CAO 批机器门（CEO 令 22:57·生成侧软标）：缺/不合法 → gated（消费侧 fail-closed 硬拒）
+  const _caoIn = opts.caoApproval ?? ((doc as unknown as Record<string, unknown>).cao_approval as CaoApproval | undefined);
+  const _cao = validateCaoApproval(_caoIn);
+  if (_cao.ok) {
+    charter.cao_approval = _caoIn;
+  } else {
+    charter.gated = true;
+    charter.gate_reason = 'cao_not_approved';
+    charter.cao_gate_missing = _cao.missing;
+    (charter as unknown as Record<string, unknown>).cao_gate = {
+      code: _cao.code, reason: _cao.reason, detail: _cao.detail,
+      expected: _cao.expected, fix: _cao.fix,
+    };
+  }
   // E3：独立进化任务书（capability 项·COS 树协议消费·产出侧）
   const evolution = capabilityItems.length > 0 ? {
     schema_version: CHARTER_SCHEMA_VERSION,
@@ -342,7 +400,7 @@ export function charterTaskOnlyViolations(charter: { items?: Array<Record<string
 
 export function generateCharterFromFile(
   opinionsPath: string,
-  opts: { approver?: 'CEO' | 'COS'; date?: string; autoDispatch?: boolean; faces?: Record<string, unknown> } = {},
+  opts: { approver?: 'CEO' | 'COS'; date?: string; autoDispatch?: boolean; faces?: Record<string, unknown>; caoApproval?: CaoApproval } = {},
 ): GenerateResult {
   if (!existsSync(opinionsPath)) {
     return { ok: false, rejects: [], reason: `opinions 文件不存在: ${opinionsPath}` };
@@ -357,7 +415,8 @@ export function generateCharterFromFile(
     // 版本适配提示（不阻断：字段面兼容由校验兜底·CTO P4 卷 §二 schema_version 读版本适配）
     process.stderr.write(`[charter_generator] schema_version ${doc.schema_version} != ${CHARTER_SCHEMA_VERSION}（按字段面校验继续）\n`);
   }
-  return generateCharter(doc, opts);
+  const _ca = (opts.caoApproval ?? ((doc as unknown as Record<string, unknown>).cao_approval as CaoApproval | undefined));
+  return generateCharter(doc, { ...opts, caoApproval: _ca });
 }
 
 // ── CLI 薄壳：node --import tsx src/fade001/charter_generator.ts <opinions.json> [out.json] ──

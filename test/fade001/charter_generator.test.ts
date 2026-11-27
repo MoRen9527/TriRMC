@@ -293,4 +293,19 @@ describe('T1②（charter v2）六字段/归并≤5/覆盖两级', () => {
     assert.ok(String(e0.measurement ?? '').length > 0);
   });
 
+
+  it('CAO 门（生成侧软标·唯一判据 approved）：缺块/未批→gated·approved→带块', () => {
+    const base = baseDoc([okOpinion('p1')]);
+    const r1 = generateCharter(base, { date: '20261126' });
+    assert.equal(((r1.charter as unknown as Record<string, unknown>).gated), true);
+    assert.equal(((r1.charter as unknown as Record<string, unknown>).gate_reason), 'cao_not_approved');
+    const r2 = generateCharter({ ...base, cao_approval: { approved: false, approver: 'CAO', commit: '' } } as never,
+      { date: '20261126' });
+    assert.equal(((r2.charter as unknown as Record<string, unknown>).gated), true);
+    const r3 = generateCharter({ ...base, cao_approval: { approved: true, approver: 'CAO', commit: '' } } as never,
+      { date: '20261126' });
+    assert.notEqual(((r3.charter as unknown as Record<string, unknown>).gated), true);
+    assert.equal((((r3.charter as unknown as Record<string, unknown>).cao_approval as Record<string, unknown>)?.approved), true);
+  });
+
 });

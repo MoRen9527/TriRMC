@@ -24,7 +24,8 @@
 
 import { SPAWN_STAGE_TIMEOUT_MS, appendPyPath } from './chain_runner.js';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 export const FUSE_MAX_ROUNDS = 8;          // ①8 轮 FUSE 值面（D1 §一 L21 定谳值·边界案=F-2 7→8 钉）
@@ -177,6 +178,7 @@ export interface RunnerState {
   flag_state?: FlagState | null;           // 现态快照（真源=flag.json·本字段=轮历史侧写）
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
   fail_streak?: number;                    // §七（af3575af5）：连续失败轮数（test→debug 判据）
+  binding_weak?: boolean;                  // CAO v1.0.1 (b) 形态：内容绑定弱（commit 锚不可验·台账单列）
   // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
   // DP-014 守卫双修（CTO 规格 2026-11-23）：pending 所属 runId（跨 run 判重锚·旧 run 残留不挡新联审）
@@ -471,6 +473,67 @@ export function computeJointGrade(jr: unknown): JointGrade {
   return { a, b, bothPass };
 }
 
+/** CAO 定稿 v1.0.1（TC@0c70846 §三A）：charter 内容锚验——
+ *  (a) commit 非空且 charter 在 git：`git show <commit>:<rel>` sha16 须==现文件（不等=拒）
+ *  (b) commit 空/非 git：跳过对表·放行·note「commit 锚不可验·内容绑定弱」+ binding_weak:true + mount_form:"b"
+ *  ⑤宽松读法：cao_approval.content_sha256_16 若有值→即便 (b) 也比对（不等=拒）；无则不比。 */
+export function verifyCharterContentAnchor(
+  charterPath: string, commit: string, contentSha16?: string,
+): { state: 'ok' | 'mismatch' | 'weak'; code?: 'ANCHOR_MISMATCH' | 'CONTENT_CHANGED'; note?: string; mount_form?: 'a' | 'b'; binding_weak?: boolean } {
+  const _h = (buf: Buffer | string) => createHash('sha256').update(buf).digest('hex').slice(0, 16);
+  const cur = _h(readFileSync(charterPath));
+  const csha = typeof contentSha16 === 'string' && contentSha16.trim() ? contentSha16.trim() : '';
+  if (!commit || !commit.trim()) {
+    if (csha) {
+      return cur === csha
+        ? { state: 'ok', mount_form: 'b', binding_weak: true, note: 'commit 空·按 content_sha256_16 比对通过' }
+        : { state: 'mismatch', code: 'CONTENT_CHANGED', mount_form: 'b', binding_weak: true,
+            note: `content_sha 冻结=${csha} 现=${cur}` };
+    }
+    return { state: 'weak', mount_form: 'b', binding_weak: true, note: 'commit 锚空·内容绑定弱' };
+  }
+  try {
+    const dir = path.dirname(charterPath);
+    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'],
+      { encoding: 'utf8' }).trim();
+    if (!top) {
+      return { state: 'weak', mount_form: 'b', binding_weak: true, note: '非 git 工作区·内容绑定弱' };
+    }
+    const rel = path.relative(top, charterPath).split(path.sep).join('/');
+    const committed = execFileSync('git', ['-C', top, 'show', `${commit.trim()}:${rel}`],
+      { encoding: 'utf8' });
+    const oldH = _h(committed);
+    return cur === oldH
+      ? { state: 'ok', mount_form: 'a' }
+      : { state: 'mismatch', code: 'ANCHOR_MISMATCH', mount_form: 'a', note: `冻结=${oldH} 现=${cur}` };
+  } catch {
+    if (csha) {
+      return cur === csha
+        ? { state: 'ok', mount_form: 'b', binding_weak: true, note: '锚不可验·按 content_sha256_16 比对通过' }
+        : { state: 'mismatch', code: 'CONTENT_CHANGED', mount_form: 'b', binding_weak: true,
+            note: `content_sha 冻结=${csha} 现=${cur}` };
+    }
+    return { state: 'weak', mount_form: 'b', binding_weak: true, note: 'commit 锚不可验（未入 git/不存在）·内容绑定弱' };
+  }
+}
+
+/** CAO 一致性清单 #5（拒因三要素）：唯一判据 approved===true；
+ *  C1-C5 属 CAO 检查面（引用只给路径不复写：standard-templates/taskcharter-check-spec-v1.0.md）。 */
+export interface CaoGate { ok: boolean; code?: string; reason?: string; detail?: string;
+  expected?: string; fix?: string }
+export function caoApprovalGate(a: Record<string, unknown> | undefined): CaoGate {
+  if (a && a.approved === true) return { ok: true };
+  const detail = (a == null) ? 'cao_approval 块缺失' : `approved=${String(a.approved)}（需 true）`;
+  return {
+    ok: false,
+    code: 'CAO_NOT_APPROVED',
+    reason: 'CAO 批缺失/未批·拒挂任务书',
+    detail,
+    expected: 'approved: true',
+    fix: '请 CAO 批后写 cao_approval 块（approved: true·余字段供核不供判）',
+  };
+}
+
 export async function runJointReviewHook(io: RoundRunnerIo, st: RunnerState, params: RoundParams): Promise<{ grade: JointGrade; charter: 'skipped' | 'attempted' } | void> {
   if (process.env.LOOP_JOINT_REVIEW === '0') return;
   const runDir = typeof params.runDir === 'string' ? params.runDir : '';
@@ -716,9 +779,46 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
       console.error(`[fade001:charter-hook] generator rejected（fail-closed 不写 pending）: ${res.reason ?? 'unknown'}`);
       return;
     }
+    // CAO 批机器门（CEO 令 22:57 + CAO 定稿 v1.0.1 + 一致性清单 #5）：
+    // 唯一判据 approved===true（余字段供核不供判）；拒因须三要素（code/detail/expected/fix）
+    const _caoA = (res.charter as unknown as Record<string, unknown>).cao_approval as
+      Record<string, unknown> | undefined;
+    const _gate = caoApprovalGate(_caoA);
+    if (!_gate.ok) {
+      console.error('[fade001:charter-hook] ' + JSON.stringify({
+        ok: false, code: _gate.code, reason: _gate.reason, detail: _gate.detail,
+        expected: _gate.expected, fix: _gate.fix,
+      }));
+      return;
+    }
     const stamp = io.nowIso().replace(/[-:.]/g, '');
     const charterPath = path.join(runDir, `charter-${stamp}.json`);
     writeFileSync(charterPath, JSON.stringify(res.charter, null, 2) + String.fromCharCode(10), 'utf8');
+    // 追加②（CAO v1.0.1）：批后改须重签——commit 锚可验时对表内容 hash（不可验=弱绑定放行+note）
+    const _anchor = verifyCharterContentAnchor(charterPath,
+      String((_caoA as Record<string, unknown>).commit ?? ''),
+      String((_caoA as Record<string, unknown>).content_sha256_16 ?? ''));
+    if (_anchor.state === 'mismatch') {
+      console.error('[fade001:charter-hook] ' + JSON.stringify({
+        ok: false, code: _anchor.code, reason: '批了·但内容变了（批失效）·须重签·拒挂',
+        detail: String(_anchor.note ?? ''), expected: '内容与批锚一致（commit/content_sha256_16）',
+        fix: 'CAO 重签（更新 commit/content_sha256_16 锚）后重挂',
+        mount_form: _anchor.mount_form,
+      }));
+      try { rmSync(charterPath, { force: true }); } catch { /* 清理零阻断 */ }
+      return;
+    }
+    if (_anchor.binding_weak) {
+      st.binding_weak = true;                       // CAO 第二版①②：弱绑定标记（charter/门输出侧任一）
+      try {
+        const _ch = JSON.parse(readFileSync(charterPath, 'utf8')) as Record<string, unknown>;
+        _ch.binding_weak = true;
+        _ch.mount_form = _anchor.mount_form ?? 'b';
+        writeFileSync(charterPath, JSON.stringify(_ch, null, 2) + String.fromCharCode(10), 'utf8');
+      } catch { /* 标记零阻断 */ }
+      console.error('[fade001:charter-hook] note: ' + String(_anchor.note ?? '内容绑定弱')
+        + ` mount_form=${String(_anchor.mount_form)} binding_weak=true（放行·台账单列）`);
+    }
     // E3（CEO 进化架构 2026-11-26）：独立进化任务书（capability 项·COS 树协议消费）
     try {
       const evo = (res as { evolution?: unknown }).evolution;

@@ -9,6 +9,7 @@
 
 import { describe, it, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -695,6 +696,7 @@ test('P4 接线件 hook 三态：no-op（无 opinions）/fail-closed（坏 opini
     writeFileSync(path.join(root, 'opinions.json'), JSON.stringify({
       schema_version: '1.0.0', run_id: 'h1',
       opinions: [{ opinion_id: 'op1', title: 't', target: 'a.ts', change: 'c', verify: 'v', rollback: 'r', owner_seat: 'cos' }],   // T1② 六字段
+      cao_approval: { approved: true, approver: 'CAO', commit: '' },   // CAO 门（v1.0.1·唯一判据 approved）
     }));
     await tryCharterHook(io, st, { run_id: 'h1', runDir: root });
     assert.ok(typeof st.pending_charter_ref === 'string' && st.pending_charter_ref.length > 0);
@@ -962,6 +964,7 @@ test('§七 集成：test 态联审 96/96 → flag 升 prod + journal state_tran
   const tcRoot = mkdtempSync(path.join(tmpdir(), 's7-tc-'));
   const cogDir = path.join(tcRoot, 'runtime', 'cognition');
   mkdirSync(cogDir, { recursive: true });
+
   const rd = mkdtempSync(path.join(tmpdir(), 's7-rd-'));
   const pyStub = [
     'import json, sys',
@@ -996,3 +999,40 @@ test('§七 集成：test 态联审 96/96 → flag 升 prod + journal state_tran
   }
 });
 
+test('CAO 双层三 code（准入/锚/内容分列）+ 宽容面仍过', async () => {
+  const { caoApprovalGate, verifyCharterContentAnchor } = await import('../../src/fade001/round_runner.ts');
+  // 第一层：准入拒 CAO_NOT_APPROVED（三要素齐）
+  const g = caoApprovalGate(undefined);
+  assert.equal(g.ok, false);
+  assert.equal(g.code, 'CAO_NOT_APPROVED');
+  for (const k of ['reason', 'detail', 'expected', 'fix']) assert.ok(String((g as Record<string, unknown>)[k] ?? '').length > 0, k);
+  // 第二层：锚拒 ANCHOR_MISMATCH
+  const repo = mkdtempSync(path.join(tmpdir(), 'cao-codes-'));
+  const cpath = path.join(repo, 'charter-y.json');
+  const git = (args: string[]) => execFileSync('git', args,
+    { cwd: repo, encoding: 'utf8', env: { ...process.env } });
+  try {
+    writeFileSync(cpath, JSON.stringify({ v: 1 }));
+    git(['init', '-q']); git(['add', '.']);
+    git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'c1']);
+    const sha = git(['rev-parse', 'HEAD']).trim();
+    writeFileSync(cpath, JSON.stringify({ v: 2 }));
+    const a = verifyCharterContentAnchor(cpath, sha);
+    assert.equal(a.state, 'mismatch');
+    assert.equal(a.code, 'ANCHOR_MISMATCH');
+    // 内容拒 CONTENT_CHANGED（commit 空+content_sha 有值且不符）
+    const c = verifyCharterContentAnchor(cpath, '', 'deadbeefdeadbeef');
+    assert.equal(c.state, 'mismatch');
+    assert.equal(c.code, 'CONTENT_CHANGED');
+    // 宽容面：commit 空+无 content_sha → weak 放行带 binding_weak
+    const w = verifyCharterContentAnchor(cpath, '');
+    assert.equal(w.state, 'weak');
+    assert.equal(w.binding_weak, true);
+    // 宽容面：commit 空+content_sha 相符 → ok 放行
+    const cryptoH = (await import('node:crypto')).createHash('sha256')
+      .update(readFileSync(cpath)).digest('hex').slice(0, 16);
+    const ok = verifyCharterContentAnchor(cpath, '', cryptoH);
+    assert.equal(ok.state, 'ok');
+    assert.equal(ok.binding_weak, true);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});

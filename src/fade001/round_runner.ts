@@ -796,6 +796,7 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
       try { rmSync(charterPath, { force: true }); } catch { /* 清理零阻断 */ }
       return;
     }
+
     // E3（CEO 进化架构 2026-11-26）：独立进化任务书（capability 项·COS 树协议消费）
     try {
       const evo = (res as { evolution?: unknown }).evolution;

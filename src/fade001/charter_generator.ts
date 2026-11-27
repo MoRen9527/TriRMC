@@ -17,6 +17,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fingerprintBytes } from './charter_fingerprint.js';
 
 /** 任务书 schema 版本（与 fsd P4 接口面 schema_version 对齐·1.0.0） */
 export const CHARTER_SCHEMA_VERSION = '1.0.0';
@@ -63,6 +64,7 @@ export interface CaoApproval {
   approver?: string;
   approved_at?: string;
   commit?: string;
+  content_sha256_16?: string;
   checks?: string[];
 }
 
@@ -359,6 +361,13 @@ export function generateCharter(
   const _cao = validateCaoApproval(_caoIn);
   if (_cao.ok) {
     charter.cao_approval = _caoIn;
+    // 规范 v1.1 生成侧自动签名（TC@1bc7098）：对「将要写盘的文本」整体算指纹
+    // （两键空形态·JSON.stringify(…,2)+LF=挂载面写盘同形）→ 值回填——回填不破签
+    //（指纹对置空归一形态算·回填前后指纹一致）。csha 键先空值占位（指纹定义域
+    // 键须在·否则签后新增键行=置空归一形态漂移→门必拒 CONTENT_CHANGED 实锚）。
+    charter.cao_approval.content_sha256_16 = '';
+    const _fpText = JSON.stringify(charter, null, 2) + String.fromCharCode(10);
+    charter.cao_approval.content_sha256_16 = fingerprintBytes(Buffer.from(_fpText, 'utf8'))[0];
   } else {
     charter.gated = true;
     charter.gate_reason = 'cao_not_approved';

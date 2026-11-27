@@ -178,7 +178,7 @@ export interface RunnerState {
   flag_state?: FlagState | null;           // 现态快照（真源=flag.json·本字段=轮历史侧写）
   flag_since_round?: number | null;        // 自上次 flag 切换起的轮序（E2 的 8 轮判定域）
   fail_streak?: number;                    // §七（af3575af5）：连续失败轮数（test→debug 判据）
-  binding_weak?: boolean;                  // CAO v1.0.1 (b) 形态：内容绑定弱（commit 锚不可验·台账单列）
+  // binding_weak/mount_form 于规范 v1.1 退役（TC@1bc7098·指纹=唯一绑定·宽容面删）
   // P4 批准权载体（CTO 卷 be7afadff §二·CEO 决议戊）：任务书派生链的审批挂载面
   pending_charter_ref?: string | null;     // 待批任务书引用（派生任务书生成后挂载）
   // DP-014 守卫双修（CTO 规格 2026-11-23）：pending 所属 runId（跨 run 判重锚·旧 run 残留不挡新联审）
@@ -473,63 +473,29 @@ export function computeJointGrade(jr: unknown): JointGrade {
   return { a, b, bothPass };
 }
 
-/** CAO 定稿 v1.0.1（TC@0c70846 §三A）+三裁定对齐（CTO 令 2026-11-27·与 CAO §三B 同步）：
- *  R1 commit **非空**且不可验（git 不可用/对象不存在/取不到/不在任何 git 仓）→ 拒
- *     ANCHOR_MISMATCH（note=「commit 锚不可验…」供 hook 拼 detail/expected/fix）——
- *     **仅 commit 为空** → (b) 宽容（binding_weak+mount_form:"b"+note）。旧形态
- *     不可验静默落宽容=COS 今晚同类假通过实锚（basename 取法致嵌套件必败→层从未生效）。
- *  R2 content_sha256_16 有值时**两形态都比**（(a) 锚过后亦比）·不符=CONTENT_CHANGED。
- *  R3 CRLF：①commit 锚改比 **blob id**（hash-object --path=<rel> == rev-parse
- *     <commit>:<rel>——不再比原始字节 sha256 vs git show 文本·autocrlf=true 重新
- *     检出件不假红）②content_sha256_16 口径=**UTF-8 文本 CRLF→LF 归一后 sha256
- *     前 16 位**（与 CAO 批准方口径同）。
- *  路径须仓内相对（rev-parse --show-toplevel + relative）。 */
+// CAO 批门规范 v1.1（TC@1bc7098+e11f1e0）：指纹/门实现收口 charter_fingerprint.ts
+// （生成侧签名/消费侧校验/测试三方共用·零循环依赖）——本件留兼容薄封装。
+export { fingerprintBytes, charterGateCheck } from './charter_fingerprint.js';
+import { charterGateCheck } from './charter_fingerprint.js';
+import type { CharterGateCode } from './charter_fingerprint.js';
+
+/** 兼容封装：从盘件路径跑全序门（规范 v1.1·指纹=唯一内容绑定）。commit/
+ *  contentSha16 两形参降信息字段**不判**（门从盘件内嵌 cao_approval 取指纹）——
+ *  锚验分支 hash-object/rev-parse/ANCHOR_MISMATCH/binding_weak/mount_form/
+ *  (a)(b) 宽容面全退役（TC@1bc7098 §三B）。 */
 export function verifyCharterContentAnchor(
-  charterPath: string, commit: string, contentSha16?: string,
-): { state: 'ok' | 'mismatch' | 'weak'; code?: 'ANCHOR_MISMATCH' | 'CONTENT_CHANGED'; note?: string; mount_form?: 'a' | 'b'; binding_weak?: boolean } {
-  const _hnorm = (s: string) => createHash('sha256')
-    .update(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n'), 'utf8').digest('hex').slice(0, 16);
-  const cur = _hnorm(readFileSync(charterPath, 'utf8'));
-  const csha = typeof contentSha16 === 'string' && contentSha16.trim() ? contentSha16.trim() : '';
-  if (!commit || !commit.trim()) {
-    // (b) 宽容：仅 commit 为空（R1 收口——不可验≠空）
-    if (csha) {
-      return cur === csha
-        ? { state: 'ok', mount_form: 'b', binding_weak: true, note: 'commit 空·按 content_sha256_16 比对通过' }
-        : { state: 'mismatch', code: 'CONTENT_CHANGED', mount_form: 'b', binding_weak: true,
-            note: `content_sha 冻结=${csha} 现=${cur}` };
-    }
-    return { state: 'weak', mount_form: 'b', binding_weak: true, note: 'commit 锚空·内容绑定弱' };
+  charterPath: string, _commitInfo?: string, _contentSha16Deprecated?: string,
+): { state: 'ok' | 'mismatch' | 'tool_fail'; code: CharterGateCode; note: string } {
+  let raw: Buffer;
+  try { raw = readFileSync(charterPath); }
+  catch (e) {
+    return { state: 'tool_fail', code: 'GATE_TOOL_FAIL',
+      note: `charter 读取失败（${e instanceof Error ? e.message : String(e)}）·取值失败≠空值放行` };
   }
-  try {
-    const dir = path.dirname(charterPath);
-    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'],
-      { encoding: 'utf8' }).trim();
-    if (!top) throw new Error('not a git worktree');
-    const rel = path.relative(top, charterPath).split(path.sep).join('/');
-    // R3①：blob id 比对（--path=<rel> 按 Git 属性过滤·autocrlf 不敏感）
-    const workBlob = execFileSync('git', ['-C', top, 'hash-object', `--path=${rel}`, '--', rel],
-      { cwd: top, encoding: 'utf8' }).trim();
-    const committedBlob = execFileSync('git', ['-C', top, 'rev-parse', `${commit.trim()}:${rel}`],
-      { encoding: 'utf8' }).trim();
-    if (!workBlob || !committedBlob) throw new Error('blob id unavailable');
-    if (workBlob !== committedBlob) {
-      return { state: 'mismatch', code: 'ANCHOR_MISMATCH', mount_form: 'a',
-        note: `commit 锚不符（blob id）冻结=${committedBlob} 现=${workBlob}` };
-    }
-    // R2：(a) 锚过·content_sha256_16 有值时亦比（R3②归一口径）
-    if (csha) {
-      return cur === csha
-        ? { state: 'ok', mount_form: 'a' }
-        : { state: 'mismatch', code: 'CONTENT_CHANGED', mount_form: 'a',
-            note: `content_sha 冻结=${csha} 现=${cur}` };
-    }
-    return { state: 'ok', mount_form: 'a' };
-  } catch (e) {
-    // R1：commit 非空且不可验 → 拒（不再静默落宽容）
-    return { state: 'mismatch', code: 'ANCHOR_MISMATCH', mount_form: 'a',
-      note: `commit 锚不可验（${e instanceof Error ? e.message : String(e)}）·须 CAO 重签或留空走 (b) 宽容` };
-  }
+  const r = charterGateCheck(raw);
+  const state: 'ok' | 'mismatch' | 'tool_fail' =
+    r.code === 'PASS' ? 'ok' : r.code === 'GATE_TOOL_FAIL' ? 'tool_fail' : 'mismatch';
+  return { state, code: r.code, note: r.detail };
 }
 
 /** CAO 一致性清单 #5（拒因三要素）：唯一判据 approved===true；
@@ -809,30 +775,26 @@ export async function tryCharterHook(io: RoundRunnerIo, st: RunnerState, params:
     const stamp = io.nowIso().replace(/[-:.]/g, '');
     const charterPath = path.join(runDir, `charter-${stamp}.json`);
     writeFileSync(charterPath, JSON.stringify(res.charter, null, 2) + String.fromCharCode(10), 'utf8');
-    // 追加②（CAO v1.0.1）：批后改须重签——commit 锚可验时对表内容 hash（不可验=弱绑定放行+note）
+    // CAO 批门规范 v1.1（TC@1bc7098 §三B）：指纹=唯一内容绑定（G2/G3·commit=信息字段不判）
     const _anchor = verifyCharterContentAnchor(charterPath,
       String((_caoA as Record<string, unknown>).commit ?? ''),
       String((_caoA as Record<string, unknown>).content_sha256_16 ?? ''));
-    if (_anchor.state === 'mismatch') {
+    if (_anchor.state !== 'ok') {
       console.error('[fade001:charter-hook] ' + JSON.stringify({
-        ok: false, code: _anchor.code, reason: '批了·但内容变了（批失效）·须重签·拒挂',
-        detail: String(_anchor.note ?? ''), expected: '内容与批锚一致（commit/content_sha256_16）',
-        fix: 'CAO 重签（更新 commit/content_sha256_16 锚）后重挂',
-        mount_form: _anchor.mount_form,
+        ok: false, code: _anchor.code,
+        reason: _anchor.state === 'tool_fail'
+          ? '批门工具/解析失败（fail-closed）·拒挂'
+          : (_anchor.code === 'FINGERPRINT_MISSING'
+            ? 'content_sha256_16 缺失（无指纹即不能挂）·拒挂'
+            : '批了·但内容变了（批失效）·须重签·拒挂'),
+        detail: String(_anchor.note ?? ''),
+        expected: _anchor.code === 'FINGERPRINT_MISSING'
+          ? 'cao_approval.content_sha256_16=规范化指纹（严格 UTF-8·两键置空·CRLF→LF·sha256 前 16）'
+          : '内容与批指纹一致',
+        fix: 'CAO 重签（写入 content_sha256_16 规范化指纹）后重挂',
       }));
       try { rmSync(charterPath, { force: true }); } catch { /* 清理零阻断 */ }
       return;
-    }
-    if (_anchor.binding_weak) {
-      st.binding_weak = true;                       // CAO 第二版①②：弱绑定标记（charter/门输出侧任一）
-      try {
-        const _ch = JSON.parse(readFileSync(charterPath, 'utf8')) as Record<string, unknown>;
-        _ch.binding_weak = true;
-        _ch.mount_form = _anchor.mount_form ?? 'b';
-        writeFileSync(charterPath, JSON.stringify(_ch, null, 2) + String.fromCharCode(10), 'utf8');
-      } catch { /* 标记零阻断 */ }
-      console.error('[fade001:charter-hook] note: ' + String(_anchor.note ?? '内容绑定弱')
-        + ` mount_form=${String(_anchor.mount_form)} binding_weak=true（放行·台账单列）`);
     }
     // E3（CEO 进化架构 2026-11-26）：独立进化任务书（capability 项·COS 树协议消费）
     try {

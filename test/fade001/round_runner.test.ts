@@ -999,127 +999,165 @@ test('§七 集成：test 态联审 96/96 → flag 升 prod + journal state_tran
   }
 });
 
-test('CAO 双层三 code（准入/锚/内容分列）+ 宽容面仍过', async () => {
-  const { caoApprovalGate, verifyCharterContentAnchor } = await import('../../src/fade001/round_runner.ts');
-  // 第一层：准入拒 CAO_NOT_APPROVED（三要素齐）
+// ── CAO 批门规范 v1.1（TC@1bc7098+e11f1e0·指纹唯一绑定·G0→G3 全序）──────────
+
+const FP_LF = String.fromCharCode(10);
+const FP_CR = String.fromCharCode(13);
+const FP_BOM = String.fromCharCode(0xFEFF);
+const FP_E = '"content_sha256_16": ""';
+
+// 10 指纹向量（输入逐字节·taskcharter-fingerprint-vectors.md 对表）
+const V_JSON = '{"task_id":"TC-20261127-001","authorization":{"scope":"construction"},"cao_approval":{"approved":true,"approver":"CAO","approved_at":"2026-11-27T22:42:00+08:00","commit":"","content_sha256_16":""},"verify":["x -> EXIT=0"]}';
+const V05 = '{"task_id":"任务·二〇二六","note":"含 \\"引号\\" 与 \\\\ 反斜杠","cao_approval":{"approved":true,"commit":"","content_sha256_16":""}}';
+const V07 = '{"note":"例 content_sha256_16: \\"AAAA\\"","cao_approval":{"approved":true,"commit":"","content_sha256_16":""}}';
+const V08 = ['---', 'task_id: TC-20261127-001', 'form: inline', 'cao_approval:', '  approved: true', '  approver: CAO', '  commit: ""', '  content_sha256_16: ""', 'verify:', '  - "x -> EXIT=0"', '---', '', '# 任务书', '', '正文。'].join(FP_LF);
+const V10 = V08.replace('正文。', '正文。例 content_sha256_16: "d"');
+
+test('CAO v1.1 指纹 10 向量对表（期望 hex+等式组）', async () => {
+  const { fingerprintBytes } = await import('../../src/fade001/round_runner.ts');
+  const v02 = V_JSON.replace('"commit":""', '"commit":"0123456789abcd"').replace('"content_sha256_16":""', '"content_sha256_16":"0123456789abcdef"');
+  const cases: Array<[string, Buffer, string]> = [
+    ['V01', Buffer.from(V_JSON, 'utf8'), '490cc48e4f6b2d4b'],
+    ['V02', Buffer.from(v02, 'utf8'), '490cc48e4f6b2d4b'],
+    ['V03', Buffer.from(V_JSON, 'utf8'), '490cc48e4f6b2d4b'],
+    ['V04', Buffer.from(FP_BOM + V_JSON, 'utf8'), '8a06be45d680813f'],
+    ['V05', Buffer.from(V05, 'utf8'), '6176f7265754955f'],
+    ['V06', Buffer.from([0xc8, 0xce, 0xce, 0xf1, 0xca, 0xe9]), '29d8e31bbe8b6e0c'],
+    ['V07', Buffer.from(V07, 'utf8'), '83c38c47515c6c24'],
+    ['V08', Buffer.from(V08 + FP_LF, 'utf8'), 'ec7a2f97f57ee7a3'],
+    ['V09', Buffer.from((V08 + FP_LF).split(FP_LF).join(FP_CR + FP_LF), 'utf8'), 'ec7a2f97f57ee7a3'],
+    ['V10', Buffer.from(V10 + FP_LF, 'utf8'), '29012c5d480e5beb'],
+  ];
+  for (const [id, buf, want] of cases) {
+    const [hex, n] = fingerprintBytes(buf);
+    assert.equal(hex, want, id + ' 指纹 ' + hex + ' != 期望 ' + want);
+    assert.equal(n, id === 'V06' ? -1 : 2, id + ' n 期望 ' + (id === 'V06' ? -1 : 2));
+  }
+  // 等式组
+  const f01 = fingerprintBytes(Buffer.from(V_JSON, 'utf8'))[0];
+  assert.equal(fingerprintBytes(Buffer.from(v02, 'utf8'))[0], f01, 'V02=V01（两键值不影响）');
+  assert.equal(fingerprintBytes(Buffer.from(V_JSON, 'utf8'))[0], f01, 'V03=V01（CRLF 归一）');
+  assert.notEqual(fingerprintBytes(Buffer.from(FP_BOM + V_JSON, 'utf8'))[0], f01, 'V04!=V01（BOM 计入）');
+  assert.equal(fingerprintBytes(Buffer.from((V08 + FP_LF).split(FP_LF).join(FP_CR + FP_LF), 'utf8'))[0], fingerprintBytes(Buffer.from(V08 + FP_LF, 'utf8'))[0], 'V09=V08');
+  assert.notEqual(fingerprintBytes(Buffer.from(V10, 'utf8'))[0], fingerprintBytes(Buffer.from(V08, 'utf8'))[0], 'V10!=V08（块外同名键=内容）');
+});
+
+test('CAO v1.1 门回归 28 案移植（输入+期望拒因码逐案对表·TC@66fbd4f 终版）', async () => {
+  const mod = await import('../../src/fade001/round_runner.ts');
+  const charterGateCheck = mod.charterGateCheck;
+  const mk = (o) => {
+    o = o || {};
+    const d = { task_id: 'T', authorization: { scope: 'construction' },
+      cao_approval: { approved: o.approved === undefined ? true : o.approved, approver: 'CAO', approved_at: 't', commit: o.commit || '', content_sha256_16: '' } };
+    if (o.note !== null && o.note !== undefined) d.note = o.note;
+    return JSON.stringify(d, null, 1) + FP_LF;
+  };
+  const sigFn = (text) => {
+    const f = mod.fingerprintBytes(Buffer.from(text, 'utf8'))[0];
+    return text.replace(FP_E, '"content_sha256_16": "' + f + '"');
+  };
+  const malformed = (t) => {
+    const a = t.split('"content_sha256_16": "')[1].slice(0, 16);
+    return t.replace(a, 'ABCDEFGHIJKLMNO');
+  };
+  const mkNocommit = () => {                     // R-b：签时就没有 commit 键（信息字段可缺）
+    const d = JSON.parse(mk());
+    delete d.cao_approval.commit;
+    return JSON.stringify(d, null, 1) + FP_LF;
+  };
+  const s_nc = sigFn(mkNocommit());
+  const dSigned = sigFn(mk());
+  const dDelCommit = (() => { const d = JSON.parse(dSigned); delete d.cao_approval.commit; return JSON.stringify(d, null, 1) + FP_LF; })();   // R-b2：签后删整键=内容变
+  const s_nb = sigFn(mk());
+  const s_b = sigFn(FP_BOM + mk());
+  const cshaOf = (t) => t.split('"content_sha256_16": "')[1].slice(0, 16);
+  // 28 案终版（TC@66fbd4f taskcharter-gate-regress.py 逐案移植）
+  const CASES = [
+    ['① 真签真指纹', sigFn(mk()), 'PASS'],
+    ['② 指纹缺', mk(), 'FINGERPRINT_MISSING'],
+    ['③ 内容改', sigFn(mk()).replace('"construction"', '"ignition"'), 'CONTENT_CHANGED'],
+    ['④ commit 回填（信息字段·不判）', sigFn(mk({ commit: 'f'.repeat(40) })), 'PASS'],
+    ['⑤ 解析失败', '{ not json', 'GATE_TOOL_FAIL'],
+    ['⑤a 合法 UTF-8 但非 JSON 文本', Buffer.from('任务书', 'utf8').toString('latin1'), 'GATE_TOOL_FAIL'],
+    ['⑤b 真非 UTF-8 字节（GBK）→ 解码失败', Buffer.from([0xd8, 0xde, 0xce, 0xf1, 0xca, 0xe9]), 'GATE_TOOL_FAIL'],   // 『任务书』GBK 字节
+    ['⑤c 空文件', Buffer.alloc(0), 'GATE_TOOL_FAIL'],
+    ['⑤d 顶层数组（合法 JSON 非对象）', '[1,2,3]', 'CAO_NOT_APPROVED'],
+    ['G1-a 缺 cao_approval 块', '{"task_id":"T"}', 'CAO_NOT_APPROVED'],
+    ['G1-b cao_approval 为字符串', '{"cao_approval":"yes"}', 'CAO_NOT_APPROVED'],
+    ['G1-c cao_approval 为 null', '{"cao_approval":null}', 'CAO_NOT_APPROVED'],
+    ['G1-d approved 键缺', '{"cao_approval":{"approver":"CAO"}}', 'CAO_NOT_APPROVED'],
+    ['G1-e approved 为字符串 "true"（非布尔）', '{"cao_approval":{"approved":"true"}}', 'CAO_NOT_APPROVED'],
+    ['⑦ CRLF 重检出', dSigned.split(FP_LF).join(FP_CR + FP_LF), 'PASS'],
+    ['⑨ approved=false（先于指纹判）', mk({ approved: false }), 'CAO_NOT_APPROVED'],
+    ['⑪ 块前伪键·原文', sigFn(mk({ note: '例 content_sha256_16: "AAAA"' })), 'PASS'],
+    ['⑪ 块前伪键·签后只改伪键值', sigFn(mk({ note: '例 content_sha256_16: "AAAA"' })).replace('AAAA', 'ZZZZ'), 'CONTENT_CHANGED'],
+    ['B1 带 BOM 件（签时即带·指纹含 BOM）', s_b, 'PASS'],
+    ['B2 无 BOM 签·签后加 BOM', FP_BOM + s_nb, 'CONTENT_CHANGED'],
+    ['B3 带 BOM 签·签后删 BOM', s_b.slice(1), 'CONTENT_CHANGED'],
+    ['B4 带 BOM·未批', FP_BOM + mk({ approved: false }), 'CAO_NOT_APPROVED'],
+    ['R-b 签时即无 commit 键（信息字段可缺）→ 挂', s_nc, 'PASS'],
+    ['R-b2 签时有 commit 键·签后把整键删掉 → 拒', dDelCommit, 'CONTENT_CHANGED'],
+    ['R-b3 签后给 commit 回填值 → 不影响', dSigned.replace('"commit": ""', '"commit": "' + 'f'.repeat(40) + '"'), 'PASS'],
+    ['R-c 指纹畸形（非小写 hex）→ 重签', malformed(dSigned), 'FINGERPRINT_MISSING'],
+    ['R-c2 指纹长度 15', dSigned.replace(cshaOf(dSigned), cshaOf(dSigned).slice(0, 15)), 'FINGERPRINT_MISSING'],
+    ['R-c3 指纹含非 hex 字符 g', dSigned.replace(cshaOf(dSigned), 'gggggggggggggggg'), 'FINGERPRINT_MISSING'],
+  ];
+  for (const [name, input, want] of CASES) {
+    const raw = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
+    const got = charterGateCheck(raw).code;
+    assert.equal(got, want, name + '：got=' + got + ' want=' + want);
+  }
+});
+
+test('CAO v1.1 语义 7 案（verify 封装+reason 字串+R2/R4 持续有效面）', async () => {
+  const { caoApprovalGate, verifyCharterContentAnchor, fingerprintBytes } = await import('../../src/fade001/round_runner.ts');
+  // R4：reason 字串（R2/R4 持续有效面）
   const g = caoApprovalGate(undefined);
   assert.equal(g.ok, false);
   assert.equal(g.code, 'CAO_NOT_APPROVED');
-  for (const k of ['reason', 'detail', 'expected', 'fix']) assert.ok(String((g as Record<string, unknown>)[k] ?? '').length > 0, k);
-  // 第二层：锚拒 ANCHOR_MISMATCH
-  const repo = mkdtempSync(path.join(tmpdir(), 'cao-codes-'));
-  const cpath = path.join(repo, 'charter-y.json');
-  const git = (args: string[]) => execFileSync('git', args,
-    { cwd: repo, encoding: 'utf8', env: { ...process.env } });
-  try {
-    writeFileSync(cpath, JSON.stringify({ v: 1 }));
-    git(['init', '-q']); git(['add', '.']);
-    git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'c1']);
-    const sha = git(['rev-parse', 'HEAD']).trim();
-    writeFileSync(cpath, JSON.stringify({ v: 2 }));
-    const a = verifyCharterContentAnchor(cpath, sha);
-    assert.equal(a.state, 'mismatch');
-    assert.equal(a.code, 'ANCHOR_MISMATCH');
-    // 内容拒 CONTENT_CHANGED（commit 空+content_sha 有值且不符）
-    const c = verifyCharterContentAnchor(cpath, '', 'deadbeefdeadbeef');
-    assert.equal(c.state, 'mismatch');
-    assert.equal(c.code, 'CONTENT_CHANGED');
-    // 宽容面：commit 空+无 content_sha → weak 放行带 binding_weak
-    const w = verifyCharterContentAnchor(cpath, '');
-    assert.equal(w.state, 'weak');
-    assert.equal(w.binding_weak, true);
-    // 宽容面：commit 空+content_sha 相符 → ok 放行
-    const cryptoH = (await import('node:crypto')).createHash('sha256')
-      .update(readFileSync(cpath)).digest('hex').slice(0, 16);
-    const ok = verifyCharterContentAnchor(cpath, '', cryptoH);
-    assert.equal(ok.state, 'ok');
-    assert.equal(ok.binding_weak, true);
-  } finally { rmSync(repo, { recursive: true, force: true }); }
-});
-
-test('CAO 门三裁定对齐（R1 不可验拒/R2 (a) 亦比内容/R3 CRLF blob id/R4 字串）', async () => {
-  const { caoApprovalGate, verifyCharterContentAnchor } = await import('../../src/fade001/round_runner.ts');
-  // R4：reason 字串统一（去「/未批」）
-  const g = caoApprovalGate(undefined);
   assert.equal(g.reason, 'CAO 批缺失·拒挂任务书');
-  // 六案④前置复验：commit 空 → (b) 宽容带 binding_weak+note（R1 收口面）
-  const repo0 = mkdtempSync(path.join(tmpdir(), 'cao-r4-'));
+  for (const k of ['reason', 'detail', 'expected', 'fix']) assert.ok(String(g[k] ?? '').length > 0, k);
+  const mk = (commit, csha) => JSON.stringify({
+    task_id: 'T', authorization: { scope: 'construction' },
+    cao_approval: { approved: true, approver: 'CAO', approved_at: 't', commit: commit, content_sha256_16: csha },
+  }) + FP_LF;
+  const repo = mkdtempSync(path.join(tmpdir(), 'cao-v11-'));
   try {
-    const p0 = path.join(repo0, 'c.json');
-    writeFileSync(p0, '{"k":0}');
-    const w4 = verifyCharterContentAnchor(p0, '');
-    assert.equal(w4.state, 'weak');
-    assert.equal(w4.binding_weak, true);
-    assert.ok(String(w4.note ?? '').length > 0, 'note 必写');
-    assert.equal(w4.mount_form, 'b');
-  } finally { rmSync(repo0, { recursive: true, force: true }); }
-
-  // 测试①：非空假锚（对象不存在）→ ANCHOR_MISMATCH 拒（R1·不再静默落宽容）
-  const repo1 = mkdtempSync(path.join(tmpdir(), 'cao-r1-'));
-  try {
-    const p1 = path.join(repo1, 'charter-x.json');
-    writeFileSync(p1, '{"v":1}');
-    execFileSync('git', ['init', '-q'], { cwd: repo1 });
-    const r1 = verifyCharterContentAnchor(p1, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
-    assert.equal(r1.state, 'mismatch');
-    assert.equal(r1.code, 'ANCHOR_MISMATCH');
-    assert.ok(String(r1.note ?? '').includes('不可验'), 'note 须载不可验');
-    // 非工作区（文件在·未 init git 的目录）同拒（R1·charter 不在任何 git 仓形态）
-    const p1b = path.join(repo1, 'sub', 'y.json');
-    mkdirSync(path.dirname(p1b), { recursive: true });
-    writeFileSync(p1b, '{"outside":true}');
-    const r1b = verifyCharterContentAnchor(p1b, 'HEAD');
-    assert.equal(r1b.state, 'mismatch');
-    assert.equal(r1b.code, 'ANCHOR_MISMATCH');
-    assert.ok(String(r1b.note ?? '').includes('不可验'), 'note 须载不可验');
-  } finally { rmSync(repo1, { recursive: true, force: true }); }
-
-  // 测试②：(a) 锚过+content_sha256_16 不符 → CONTENT_CHANGED（R2 两形态都比）
-  const repo2 = mkdtempSync(path.join(tmpdir(), 'cao-r2-'));
-  try {
-    const p2 = path.join(repo2, 'charter-y.json');
-    writeFileSync(p2, '{"v":"anchor-ok"}');
-    execFileSync('git', ['init', '-q'], { cwd: repo2 });
-    execFileSync('git', ['add', '.'], { cwd: repo2 });
-    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'c1'],
-      { cwd: repo2 });
-    const sha2 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo2, encoding: 'utf8' }).trim();
-    const okA = verifyCharterContentAnchor(p2, sha2);
-    assert.equal(okA.state, 'ok');
-    assert.equal(okA.mount_form, 'a');
-    const r2 = verifyCharterContentAnchor(p2, sha2, 'deadbeefdeadbeef');
+    const p = path.join(repo, 'c.json');
+    // ① 真签过：签时形态算指纹→值回填（commit 回填=信息字段不判）
+    const f = fingerprintBytes(Buffer.from(mk('', ''), 'utf8'))[0];
+    writeFileSync(p, mk('f'.repeat(40), f), 'utf8');
+    const r1 = verifyCharterContentAnchor(p);
+    assert.equal(r1.state, 'ok');
+    assert.equal(r1.code, 'PASS');
+    // ② 缺指纹拒 FINGERPRINT_MISSING（宽容面退役——commit 空不放行）
+    writeFileSync(p, mk('', ''), 'utf8');
+    const r2 = verifyCharterContentAnchor(p);
     assert.equal(r2.state, 'mismatch');
-    assert.equal(r2.code, 'CONTENT_CHANGED');
-    assert.equal(r2.mount_form, 'a');
-  } finally { rmSync(repo2, { recursive: true, force: true }); }
-
-  // 测试③：CRLF 工作区件 vs LF blob → blob id 相等不假红（R3①·autocrlf=true）
-  const repo3 = mkdtempSync(path.join(tmpdir(), 'cao-r3-'));
-  const git3 = (args: string[]) => execFileSync('git', args, { cwd: repo3, encoding: 'utf8' });
-  try {
-    git3(['init', '-q']);
-    git3(['config', 'core.autocrlf', 'true']);
-    const p3 = path.join(repo3, 'charter-crlf.json');
-    writeFileSync(p3, '{"v":"crlf-body"}\r\n', 'utf8');   // 工作区 CRLF
-    git3(['add', '.']);
-    git3(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'c1']);
-    const sha3 = git3(['rev-parse', 'HEAD']).trim();
-    // 旧机理形态自证：git show 文本（LF）sha256 ≠ 工作区字节（CRLF）hash → 必假红
-    const shown = execFileSync('git', ['show', `${sha3}:charter-crlf.json`], { cwd: repo3 });
-    const rawHash = (await import('node:crypto')).createHash('sha256')
-      .update(readFileSync(p3)).digest('hex').slice(0, 16);
-    const shownHash = (await import('node:crypto')).createHash('sha256')
-      .update(shown).digest('hex').slice(0, 16);
-    assert.notEqual(rawHash, shownHash, '前置自证：旧口径（字节 vs show 文本）必假红');
-    // 新机理：blob id 比对 → 不假红
-    const r3 = verifyCharterContentAnchor(p3, sha3);
-    assert.equal(r3.state, 'ok');
-    assert.equal(r3.mount_form, 'a');
-    // R3②：归一口径（CRLF→LF）下 csha 亦过
-    const normHash = (await import('node:crypto')).createHash('sha256')
-      .update(readFileSync(p3, 'utf8').replace(/\r\n/g, '\n'), 'utf8').digest('hex').slice(0, 16);
-    const r3b = verifyCharterContentAnchor(p3, '', normHash);
-    assert.equal(r3b.state, 'ok');
-    assert.equal(r3b.binding_weak, true);
-  } finally { rmSync(repo3, { recursive: true, force: true }); }
+    assert.equal(r2.code, 'FINGERPRINT_MISSING');
+    // ③ 内容改拒 CONTENT_CHANGED（签后真改动）
+    writeFileSync(p, mk('f'.repeat(40), f).replace('"construction"', '"ignition"'), 'utf8');
+    const r3 = verifyCharterContentAnchor(p);
+    assert.equal(r3.state, 'mismatch');
+    assert.equal(r3.code, 'CONTENT_CHANGED');
+    // ⑤ 解析失败拒 GATE_TOOL_FAIL（取值失败≠空值放行）
+    writeFileSync(p, '{ not json', 'utf8');
+    const r5 = verifyCharterContentAnchor(p);
+    assert.equal(r5.state, 'tool_fail');
+    assert.equal(r5.code, 'GATE_TOOL_FAIL');
+    // ⑥ 带 BOM 件过且指纹保 BOM（签时即带·指纹含 BOM）
+    const fb = fingerprintBytes(Buffer.from(FP_BOM + mk('', ''), 'utf8'))[0];
+    assert.notEqual(fb, f, 'BOM 计入自证（V04!=V01 同构）');
+    writeFileSync(p, FP_BOM + mk('', fb), 'utf8');
+    const r6 = verifyCharterContentAnchor(p);
+    assert.equal(r6.state, 'ok');
+    // ⑦ CRLF 重检出过（签时 LF·签后 CRLF 重写）
+    writeFileSync(p, mk('f'.repeat(40), f).split(FP_LF).join(FP_CR + FP_LF), 'utf8');
+    const r7 = verifyCharterContentAnchor(p);
+    assert.equal(r7.state, 'ok');
+    // ⑧ 读取失败 → GATE_TOOL_FAIL（文件不存在 fail-closed）
+    const r8 = verifyCharterContentAnchor(path.join(repo, 'no-such.json'));
+    assert.equal(r8.state, 'tool_fail');
+    assert.equal(r8.code, 'GATE_TOOL_FAIL');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });

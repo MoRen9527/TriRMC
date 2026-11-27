@@ -473,17 +473,26 @@ export function computeJointGrade(jr: unknown): JointGrade {
   return { a, b, bothPass };
 }
 
-/** CAO 定稿 v1.0.1（TC@0c70846 §三A）：charter 内容锚验——
- *  (a) commit 非空且 charter 在 git：`git show <commit>:<rel>` sha16 须==现文件（不等=拒）
- *  (b) commit 空/非 git：跳过对表·放行·note「commit 锚不可验·内容绑定弱」+ binding_weak:true + mount_form:"b"
- *  ⑤宽松读法：cao_approval.content_sha256_16 若有值→即便 (b) 也比对（不等=拒）；无则不比。 */
+/** CAO 定稿 v1.0.1（TC@0c70846 §三A）+三裁定对齐（CTO 令 2026-11-27·与 CAO §三B 同步）：
+ *  R1 commit **非空**且不可验（git 不可用/对象不存在/取不到/不在任何 git 仓）→ 拒
+ *     ANCHOR_MISMATCH（note=「commit 锚不可验…」供 hook 拼 detail/expected/fix）——
+ *     **仅 commit 为空** → (b) 宽容（binding_weak+mount_form:"b"+note）。旧形态
+ *     不可验静默落宽容=COS 今晚同类假通过实锚（basename 取法致嵌套件必败→层从未生效）。
+ *  R2 content_sha256_16 有值时**两形态都比**（(a) 锚过后亦比）·不符=CONTENT_CHANGED。
+ *  R3 CRLF：①commit 锚改比 **blob id**（hash-object --path=<rel> == rev-parse
+ *     <commit>:<rel>——不再比原始字节 sha256 vs git show 文本·autocrlf=true 重新
+ *     检出件不假红）②content_sha256_16 口径=**UTF-8 文本 CRLF→LF 归一后 sha256
+ *     前 16 位**（与 CAO 批准方口径同）。
+ *  路径须仓内相对（rev-parse --show-toplevel + relative）。 */
 export function verifyCharterContentAnchor(
   charterPath: string, commit: string, contentSha16?: string,
 ): { state: 'ok' | 'mismatch' | 'weak'; code?: 'ANCHOR_MISMATCH' | 'CONTENT_CHANGED'; note?: string; mount_form?: 'a' | 'b'; binding_weak?: boolean } {
-  const _h = (buf: Buffer | string) => createHash('sha256').update(buf).digest('hex').slice(0, 16);
-  const cur = _h(readFileSync(charterPath));
+  const _hnorm = (s: string) => createHash('sha256')
+    .update(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n'), 'utf8').digest('hex').slice(0, 16);
+  const cur = _hnorm(readFileSync(charterPath, 'utf8'));
   const csha = typeof contentSha16 === 'string' && contentSha16.trim() ? contentSha16.trim() : '';
   if (!commit || !commit.trim()) {
+    // (b) 宽容：仅 commit 为空（R1 收口——不可验≠空）
     if (csha) {
       return cur === csha
         ? { state: 'ok', mount_form: 'b', binding_weak: true, note: 'commit 空·按 content_sha256_16 比对通过' }
@@ -496,24 +505,30 @@ export function verifyCharterContentAnchor(
     const dir = path.dirname(charterPath);
     const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'],
       { encoding: 'utf8' }).trim();
-    if (!top) {
-      return { state: 'weak', mount_form: 'b', binding_weak: true, note: '非 git 工作区·内容绑定弱' };
-    }
+    if (!top) throw new Error('not a git worktree');
     const rel = path.relative(top, charterPath).split(path.sep).join('/');
-    const committed = execFileSync('git', ['-C', top, 'show', `${commit.trim()}:${rel}`],
-      { encoding: 'utf8' });
-    const oldH = _h(committed);
-    return cur === oldH
-      ? { state: 'ok', mount_form: 'a' }
-      : { state: 'mismatch', code: 'ANCHOR_MISMATCH', mount_form: 'a', note: `冻结=${oldH} 现=${cur}` };
-  } catch {
+    // R3①：blob id 比对（--path=<rel> 按 Git 属性过滤·autocrlf 不敏感）
+    const workBlob = execFileSync('git', ['-C', top, 'hash-object', `--path=${rel}`, '--', rel],
+      { cwd: top, encoding: 'utf8' }).trim();
+    const committedBlob = execFileSync('git', ['-C', top, 'rev-parse', `${commit.trim()}:${rel}`],
+      { encoding: 'utf8' }).trim();
+    if (!workBlob || !committedBlob) throw new Error('blob id unavailable');
+    if (workBlob !== committedBlob) {
+      return { state: 'mismatch', code: 'ANCHOR_MISMATCH', mount_form: 'a',
+        note: `commit 锚不符（blob id）冻结=${committedBlob} 现=${workBlob}` };
+    }
+    // R2：(a) 锚过·content_sha256_16 有值时亦比（R3②归一口径）
     if (csha) {
       return cur === csha
-        ? { state: 'ok', mount_form: 'b', binding_weak: true, note: '锚不可验·按 content_sha256_16 比对通过' }
-        : { state: 'mismatch', code: 'CONTENT_CHANGED', mount_form: 'b', binding_weak: true,
+        ? { state: 'ok', mount_form: 'a' }
+        : { state: 'mismatch', code: 'CONTENT_CHANGED', mount_form: 'a',
             note: `content_sha 冻结=${csha} 现=${cur}` };
     }
-    return { state: 'weak', mount_form: 'b', binding_weak: true, note: 'commit 锚不可验（未入 git/不存在）·内容绑定弱' };
+    return { state: 'ok', mount_form: 'a' };
+  } catch (e) {
+    // R1：commit 非空且不可验 → 拒（不再静默落宽容）
+    return { state: 'mismatch', code: 'ANCHOR_MISMATCH', mount_form: 'a',
+      note: `commit 锚不可验（${e instanceof Error ? e.message : String(e)}）·须 CAO 重签或留空走 (b) 宽容` };
   }
 }
 
@@ -527,7 +542,7 @@ export function caoApprovalGate(a: Record<string, unknown> | undefined): CaoGate
   return {
     ok: false,
     code: 'CAO_NOT_APPROVED',
-    reason: 'CAO 批缺失/未批·拒挂任务书',
+    reason: 'CAO 批缺失·拒挂任务书',
     detail,
     expected: 'approved: true',
     fix: '请 CAO 批后写 cao_approval 块（approved: true·余字段供核不供判）',

@@ -1036,3 +1036,90 @@ test('CAO 双层三 code（准入/锚/内容分列）+ 宽容面仍过', async (
     assert.equal(ok.binding_weak, true);
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
+
+test('CAO 门三裁定对齐（R1 不可验拒/R2 (a) 亦比内容/R3 CRLF blob id/R4 字串）', async () => {
+  const { caoApprovalGate, verifyCharterContentAnchor } = await import('../../src/fade001/round_runner.ts');
+  // R4：reason 字串统一（去「/未批」）
+  const g = caoApprovalGate(undefined);
+  assert.equal(g.reason, 'CAO 批缺失·拒挂任务书');
+  // 六案④前置复验：commit 空 → (b) 宽容带 binding_weak+note（R1 收口面）
+  const repo0 = mkdtempSync(path.join(tmpdir(), 'cao-r4-'));
+  try {
+    const p0 = path.join(repo0, 'c.json');
+    writeFileSync(p0, '{"k":0}');
+    const w4 = verifyCharterContentAnchor(p0, '');
+    assert.equal(w4.state, 'weak');
+    assert.equal(w4.binding_weak, true);
+    assert.ok(String(w4.note ?? '').length > 0, 'note 必写');
+    assert.equal(w4.mount_form, 'b');
+  } finally { rmSync(repo0, { recursive: true, force: true }); }
+
+  // 测试①：非空假锚（对象不存在）→ ANCHOR_MISMATCH 拒（R1·不再静默落宽容）
+  const repo1 = mkdtempSync(path.join(tmpdir(), 'cao-r1-'));
+  try {
+    const p1 = path.join(repo1, 'charter-x.json');
+    writeFileSync(p1, '{"v":1}');
+    execFileSync('git', ['init', '-q'], { cwd: repo1 });
+    const r1 = verifyCharterContentAnchor(p1, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+    assert.equal(r1.state, 'mismatch');
+    assert.equal(r1.code, 'ANCHOR_MISMATCH');
+    assert.ok(String(r1.note ?? '').includes('不可验'), 'note 须载不可验');
+    // 非工作区（文件在·未 init git 的目录）同拒（R1·charter 不在任何 git 仓形态）
+    const p1b = path.join(repo1, 'sub', 'y.json');
+    mkdirSync(path.dirname(p1b), { recursive: true });
+    writeFileSync(p1b, '{"outside":true}');
+    const r1b = verifyCharterContentAnchor(p1b, 'HEAD');
+    assert.equal(r1b.state, 'mismatch');
+    assert.equal(r1b.code, 'ANCHOR_MISMATCH');
+    assert.ok(String(r1b.note ?? '').includes('不可验'), 'note 须载不可验');
+  } finally { rmSync(repo1, { recursive: true, force: true }); }
+
+  // 测试②：(a) 锚过+content_sha256_16 不符 → CONTENT_CHANGED（R2 两形态都比）
+  const repo2 = mkdtempSync(path.join(tmpdir(), 'cao-r2-'));
+  try {
+    const p2 = path.join(repo2, 'charter-y.json');
+    writeFileSync(p2, '{"v":"anchor-ok"}');
+    execFileSync('git', ['init', '-q'], { cwd: repo2 });
+    execFileSync('git', ['add', '.'], { cwd: repo2 });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'c1'],
+      { cwd: repo2 });
+    const sha2 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo2, encoding: 'utf8' }).trim();
+    const okA = verifyCharterContentAnchor(p2, sha2);
+    assert.equal(okA.state, 'ok');
+    assert.equal(okA.mount_form, 'a');
+    const r2 = verifyCharterContentAnchor(p2, sha2, 'deadbeefdeadbeef');
+    assert.equal(r2.state, 'mismatch');
+    assert.equal(r2.code, 'CONTENT_CHANGED');
+    assert.equal(r2.mount_form, 'a');
+  } finally { rmSync(repo2, { recursive: true, force: true }); }
+
+  // 测试③：CRLF 工作区件 vs LF blob → blob id 相等不假红（R3①·autocrlf=true）
+  const repo3 = mkdtempSync(path.join(tmpdir(), 'cao-r3-'));
+  const git3 = (args: string[]) => execFileSync('git', args, { cwd: repo3, encoding: 'utf8' });
+  try {
+    git3(['init', '-q']);
+    git3(['config', 'core.autocrlf', 'true']);
+    const p3 = path.join(repo3, 'charter-crlf.json');
+    writeFileSync(p3, '{"v":"crlf-body"}\r\n', 'utf8');   // 工作区 CRLF
+    git3(['add', '.']);
+    git3(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'c1']);
+    const sha3 = git3(['rev-parse', 'HEAD']).trim();
+    // 旧机理形态自证：git show 文本（LF）sha256 ≠ 工作区字节（CRLF）hash → 必假红
+    const shown = execFileSync('git', ['show', `${sha3}:charter-crlf.json`], { cwd: repo3 });
+    const rawHash = (await import('node:crypto')).createHash('sha256')
+      .update(readFileSync(p3)).digest('hex').slice(0, 16);
+    const shownHash = (await import('node:crypto')).createHash('sha256')
+      .update(shown).digest('hex').slice(0, 16);
+    assert.notEqual(rawHash, shownHash, '前置自证：旧口径（字节 vs show 文本）必假红');
+    // 新机理：blob id 比对 → 不假红
+    const r3 = verifyCharterContentAnchor(p3, sha3);
+    assert.equal(r3.state, 'ok');
+    assert.equal(r3.mount_form, 'a');
+    // R3②：归一口径（CRLF→LF）下 csha 亦过
+    const normHash = (await import('node:crypto')).createHash('sha256')
+      .update(readFileSync(p3, 'utf8').replace(/\r\n/g, '\n'), 'utf8').digest('hex').slice(0, 16);
+    const r3b = verifyCharterContentAnchor(p3, '', normHash);
+    assert.equal(r3b.state, 'ok');
+    assert.equal(r3b.binding_weak, true);
+  } finally { rmSync(repo3, { recursive: true, force: true }); }
+});

@@ -87,7 +87,7 @@ export function validateCaoApproval(a: unknown): CaoGateResult {
   return {
     ok: false,
     code: 'CAO_NOT_APPROVED',
-    reason: 'CAO 批缺失/未批·拒挂任务书',
+    reason: 'CAO 批缺失·拒挂任务书',
     detail,
     expected: 'approved: true',
     fix: '请 CAO 批后写 cao_approval 块（approved: true·余字段供核不供判）',
